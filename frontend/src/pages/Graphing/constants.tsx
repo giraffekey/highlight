@@ -1,30 +1,60 @@
 import {
-	IconSolidChartBar,
+	Box,
 	IconSolidLightningBolt,
 	IconSolidLogs,
 	IconSolidPlayCircle,
 	IconSolidTraces,
 } from '@highlight-run/ui/components'
-
-import { MetricAggregator, ProductType } from '@/graph/generated/schemas'
+import { betaTag } from '@/components/Header/styles.css'
+import {
+	MetricAggregator,
+	ProductType,
+	SuggestionType,
+} from '@/graph/generated/schemas'
 
 export const DEFAULT_BUCKET_COUNT = 50
+export const DEFAULT_BUCKET_INTERVAL = 60 * 60
 
-export const PRODUCTS: ProductType[] = [
-	ProductType.Logs,
-	ProductType.Traces,
-	ProductType.Sessions,
-	ProductType.Errors,
-	ProductType.Metrics,
+export const PRODUCT_OPTIONS = [
+	{
+		name: ProductType.Logs,
+		value: ProductType.Logs,
+		icon: <IconSolidLogs key="logs" />,
+	},
+	{
+		name: ProductType.Traces,
+		value: ProductType.Traces,
+		icon: <IconSolidTraces key="traces" />,
+	},
+	{
+		name: ProductType.Sessions,
+		value: ProductType.Sessions,
+		icon: <IconSolidPlayCircle key="sessions" />,
+	},
+	{
+		name: ProductType.Errors,
+		value: ProductType.Errors,
+		icon: <IconSolidLightningBolt key="errors" />,
+	},
+	// TODO(vkorolik) metrics disabled in the frontend to avoid confusion
+	// {
+	// 	name: ProductType.Metrics,
+	// 	value: ProductType.Metrics,
+	// 	icon: <IconSolidChartBar key="metrics" />,
+	// }
 ]
 
-export const PRODUCT_ICONS = [
-	<IconSolidLogs key="logs" />,
-	<IconSolidTraces key="traces" />,
-	<IconSolidPlayCircle key="sessions" />,
-	<IconSolidLightningBolt key="errors" />,
-	<IconSolidChartBar key="metrics" />,
-]
+export const PRODUCT_OPTIONS_WITH_EVENTS = PRODUCT_OPTIONS.concat([
+	{
+		name: ProductType.Events,
+		value: ProductType.Events,
+		icon: (
+			<Box cssClass={betaTag} key="events">
+				Beta
+			</Box>
+		),
+	},
+])
 
 export const NUMERIC_FUNCTION_TYPES: MetricAggregator[] = [
 	MetricAggregator.Min,
@@ -41,6 +71,12 @@ export const FUNCTION_TYPES: MetricAggregator[] = [
 	MetricAggregator.Count,
 	MetricAggregator.CountDistinct,
 	...NUMERIC_FUNCTION_TYPES,
+]
+
+export const SUGGESTION_TYPES: SuggestionType[] = [
+	SuggestionType.Value,
+	SuggestionType.Key,
+	SuggestionType.None,
 ]
 
 export const GRAPHING_FIELD_DOCS_LINK =

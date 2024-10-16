@@ -6,7 +6,7 @@ import { Badge } from '../Badge/Badge'
 import { Box } from '../Box/Box'
 import { Button, ButtonProps } from '../Button/Button'
 import { IconSolidCheveronDown, IconSolidCheveronUp } from '../icons'
-import { OptionProps, Select as UISelect, SelectProps } from '../Select/Select'
+import { OptionProps, SelectProps, Select as UISelect } from '../Select/Select'
 import { Stack } from '../Stack/Stack'
 import { Text } from '../Text/Text'
 import * as styles from './styles.css'
@@ -196,9 +196,11 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
 							style={{ top: 0, right: 0, bottom: 0 }}
 						>
 							<button
+								type="button"
 								className={styles.inputNumberButton}
-								onClick={() => {
-									inputRef.current?.stepUp()
+								onClick={(e) => {
+									const steps = e.shiftKey ? 10 : 1
+									inputRef.current?.stepUp(steps)
 									emitChange()
 								}}
 							>
@@ -209,9 +211,11 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
 							</button>
 							<Box cssClass={styles.inputNumberDivider} />
 							<button
+								type="button"
 								className={styles.inputNumberButton}
-								onClick={() => {
-									inputRef.current?.stepDown()
+								onClick={(e) => {
+									const steps = e.shiftKey ? 10 : 1
+									inputRef.current?.stepDown(steps)
 									emitChange()
 								}}
 							>

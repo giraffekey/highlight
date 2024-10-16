@@ -1,8 +1,7 @@
 import * as Ariakit from '@ariakit/react'
 import { isEqual } from 'lodash'
 import { matchSorter } from 'match-sorter'
-import React, { useEffect, useMemo, useRef } from 'react'
-import { useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 
 import { Badge } from '../Badge/Badge'
 import { Box } from '../Box/Box'
@@ -11,6 +10,7 @@ import { ButtonIcon } from '../ButtonIcon/ButtonIcon'
 import {
 	IconSolidCheck,
 	IconSolidCheckCircle,
+	IconSolidLoading,
 	IconSolidSelector,
 	IconSolidX,
 	IconSolidXCircle,
@@ -18,6 +18,7 @@ import {
 import { Stack } from '../Stack/Stack'
 import { Text } from '../Text/Text'
 import * as styles from './styles.css'
+import { themeVars } from '../../theme'
 
 export type SelectOption = {
 	name: string
@@ -45,6 +46,7 @@ type SelectProviderProps<T = any> = {
 	setOptions?: (options: T) => void
 	setValue?: (value: T) => void
 	onValueChange?: (value: T) => void
+	onSearchValueChange?: (value: string) => void
 }
 
 const SelectContext = React.createContext<SelectProviderProps>({
@@ -70,21 +72,21 @@ const SelectProvider = <T,>({
 	onValueChange,
 	...props
 }: React.PropsWithChildren<Omit<SelectProviderProps<T>, 'setValue'>>) => {
-	options = (options ?? []).map(singleValueToOption)
+	const opts = (options ?? []).map(singleValueToOption)
 	const [value, setValue] = useState(valueProp)
 
 	/* eslint-disable @typescript-eslint/no-explicit-any */
 	const handleSetValue = (newValue: string | string[]) => {
 		const noValue = Array.isArray(value) ? value.length === 0 : !value
 		// Avoid triggering the callback if we haven't initialized yet.
-		const noCallback = (!options.length && noValue) || props.loading
+		const noCallback = (!opts.length && noValue) || props.loading
 
 		let newInternalValue: any
-		if (options.length) {
+		if (opts.length) {
 			if (Array.isArray(newValue) && Array.isArray(value)) {
 				newInternalValue = [...value]
 				;(newValue as string[]).forEach((option) => {
-					const foundOption = options.find((o) =>
+					const foundOption = opts.find((o) =>
 						optionsMatch(o, option),
 					)
 					const isSelected = newInternalValue.some((v: any) =>
@@ -101,7 +103,7 @@ const SelectProvider = <T,>({
 						newValue.some((v) => optionsMatch(v, option)),
 				)
 			} else {
-				newInternalValue = options.find((option) =>
+				newInternalValue = opts.find((option) =>
 					optionsMatch(option, newValue as string),
 				)
 			}
@@ -122,7 +124,7 @@ const SelectProvider = <T,>({
 	return (
 		<SelectContext.Provider
 			value={{
-				options,
+				options: opts,
 				value,
 				setValue: handleSetValue,
 				...props,
@@ -146,14 +148,17 @@ export type SelectProps<T = any> = Omit<
 	displayMode?: SelectProviderProps['displayMode']
 	filterable?: boolean
 	loading?: SelectProviderProps['loading']
+	resultsLoading?: boolean
 	trigger?: React.ComponentType
 	options?: SelectProviderProps['options']
+	placeholder?: string
 	store?: Ariakit.SelectProviderProps['store']
 	value?: T
 	renderValue?: (
 		value: Ariakit.SelectStoreState['value'],
 	) => React.ReactElement | string | null
 	onValueChange?: SelectProviderProps['onValueChange']
+	onSearchValueChange?: SelectProviderProps['onSearchValueChange']
 	onCreate?: (newOptionValue: string) => void
 }
 
@@ -165,14 +170,20 @@ export const Select = <T,>({
 	displayMode,
 	filterable,
 	loading,
+	resultsLoading,
 	store,
 	value: valueProp,
 	options: optionsProp,
 	onValueChange,
+	onSearchValueChange,
 	onCreate,
 	...props
 }: SelectProps<T>) => {
-	const [searchValue, setSearchValue] = useState('')
+	const [searchValue, setSearchValueImpl] = useState('')
+	const setSearchValue = (searchValue: string) => {
+		setSearchValueImpl(searchValue)
+		onSearchValueChange && onSearchValueChange(searchValue)
+	}
 	const value = valueProp ?? props.defaultValue
 	const [options, setOptions] = useState(
 		valueToOptions(optionsProp) as SelectOption[],
@@ -200,7 +211,7 @@ export const Select = <T,>({
 	}
 
 	const setStoreInternally = async (newOptions: string | string[]) => {
-		store.setValue(newOptions)
+		store?.setValue(newOptions)
 	}
 
 	const handleCreateOption = (newOptionValue: string) => {
@@ -209,7 +220,7 @@ export const Select = <T,>({
 			{ name: newOptionValue, value: newOptionValue },
 		])
 
-		const storeValue = store.getState().value
+		const storeValue = store?.getState().value
 		const isMulti = Array.isArray(storeValue)
 
 		// Wrapping in a timeout as a hack to wait until setOptions has finished
@@ -244,18 +255,25 @@ export const Select = <T,>({
 			const { value } = store.getState()
 			let newOptions = valueToOptions(optionsProp) as SelectOption[]
 
-			if (Array.isArray(newOptions) && Array.isArray(value)) {
-				const missingOptions = value
-					.filter(
-						(v) =>
-							!newOptions.some((option) =>
-								optionsMatch(option, v),
-							),
-					)
-					.map((v) => ({ name: v, value: v }))
+			if (Array.isArray(newOptions)) {
+				if (Array.isArray(value)) {
+					const missingOptions = value
+						.filter(
+							(v) =>
+								!newOptions.some((option) =>
+									optionsMatch(option, v),
+								),
+						)
+						.map((v) => ({ name: v, value: v }))
 
-				if (missingOptions.length) {
-					newOptions = [...newOptions, ...missingOptions]
+					if (missingOptions.length) {
+						newOptions = [...newOptions, ...missingOptions]
+					}
+				} else if (
+					!!value &&
+					!newOptions.some((option) => optionsMatch(option, value))
+				) {
+					newOptions = [...newOptions, { name: value, value }]
 				}
 
 				setOptions(newOptions)
@@ -277,7 +295,7 @@ export const Select = <T,>({
 				? matchSorter(matches, searchValue, {
 						keys: ['name', 'value'],
 						threshold: matchSorter.rankings.CASE_SENSITIVE_EQUAL,
-				  }).length > 0
+					}).length > 0
 				: false,
 		[matches, searchValue],
 	)
@@ -291,7 +309,7 @@ export const Select = <T,>({
 				<Provider store={store} options={options}>
 					<Trigger {...props} />
 					<Popover>
-						<Box px="4" pb="4">
+						<Box px="4" pb="4" display="flex" alignItems="center">
 							<Ariakit.Combobox
 								autoSelect
 								placeholder="Search..."
@@ -299,6 +317,12 @@ export const Select = <T,>({
 								value={searchValue}
 								onChange={(e) => setSearchValue(e.target.value)}
 							/>
+							{resultsLoading && (
+								<IconSolidLoading
+									className={styles.loadingIcon}
+									color={themeVars.static.content.weak}
+								/>
+							)}
 						</Box>
 
 						<Ariakit.ComboboxList>
@@ -352,7 +376,7 @@ export const Select = <T,>({
 								>
 									{option.name}
 								</Option>
-						  ))
+							))
 						: children}
 				</Popover>
 			</Provider>
@@ -400,9 +424,18 @@ const Trigger: React.FC<Omit<SelectProps, 'value' | 'setValue'>> = ({
 		}
 
 		const findOption = (value: string | number): SelectOption => {
-			const foundOption = options.find((option) =>
-				optionsMatch(option, value),
-			) as SelectOption | undefined
+			const foundOption = (options ?? [])
+				.map((option) =>
+					typeof option === 'string'
+						? ({
+								name: option,
+								value: option,
+							} as SelectOption)
+						: option,
+				)
+				.find((option) => optionsMatch(option, value)) as
+				| SelectOption
+				| undefined
 
 			return foundOption ?? stringOrNumberToOption(value)
 		}
@@ -565,7 +598,13 @@ export const SelectTrigger: React.FC<SelectTriggerProps> = ({
 					)}
 
 					{!hideArrow && (
-						<Ariakit.SelectArrow render={<IconSolidSelector />} />
+						<Ariakit.SelectArrow
+							render={
+								<IconSolidSelector
+									color={themeVars.static.content.moderate}
+								/>
+							}
+						/>
 					)}
 				</Stack>
 			</Stack>
@@ -623,13 +662,14 @@ export const Option: React.FC<OptionProps> = ({
 			className={styles.item}
 			{...props}
 		>
-			<ItemCheck checked={selected} />
+			<ItemCheck checked={selected} style={{ flexShrink: 0 }} />
 			{children ? (
 				typeof children === 'string' ? (
 					<Text
 						size="small"
 						weight="medium"
 						color="secondaryContentOnEnabled"
+						lines="1"
 					>
 						{children}
 					</Text>
@@ -641,6 +681,7 @@ export const Option: React.FC<OptionProps> = ({
 					size="small"
 					weight="medium"
 					color="secondaryContentOnEnabled"
+					lines="1"
 				>
 					{value}
 				</Text>
@@ -666,7 +707,7 @@ export const ItemCheck: React.FC<Ariakit.SelectItemCheckProps> = ({
 	}
 
 	return (
-		<Ariakit.SelectItemCheck {...props}>
+		<Ariakit.SelectItemCheck {...props} className={styles.checkmark}>
 			{children ?? <IconSolidCheck size="16" />}
 		</Ariakit.SelectItemCheck>
 	)
@@ -675,12 +716,7 @@ export const ItemCheck: React.FC<Ariakit.SelectItemCheckProps> = ({
 type PopoverProps = Ariakit.SelectPopoverProps
 export const Popover: React.FC<PopoverProps> = ({ children, ...props }) => {
 	return (
-		<Ariakit.SelectPopover
-			sameWidth
-			gutter={4}
-			className={styles.popover}
-			{...props}
-		>
+		<Ariakit.SelectPopover gutter={4} className={styles.popover} {...props}>
 			{/*
 			There is a bug in Ariakit where you need to have this arrow rendered or
 			else positioning of the popover breaks. We render it, but hide it by
@@ -826,7 +862,7 @@ const SelectTag: React.FC<{ children: string; value: string | number }> = ({
 				const newValue = Array.isArray(selectValue)
 					? selectValue.filter(
 							(v) => !optionsMatch(v, { name, value }),
-					  )
+						)
 					: ''
 
 				selectStore.setValue(newValue)

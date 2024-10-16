@@ -9,7 +9,6 @@ import {
 	shouldNetworkRequestBeRecorded,
 	shouldNetworkRequestBeTraced,
 } from './utils'
-import { getActiveSpan } from '../../../otel'
 
 export interface BrowserXHR extends XMLHttpRequest {
 	_method: string
@@ -25,7 +24,7 @@ export interface BrowserXHR extends XMLHttpRequest {
  */
 export const XHRListener = (
 	callback: NetworkListenerCallback,
-	backendUrl: string,
+	highlightEndpoints: string[],
 	tracingOrigins: boolean | (string | RegExp)[],
 	urlBlocklist: string[],
 	bodyKeysToRedact: string[],
@@ -72,7 +71,7 @@ export const XHRListener = (
 		if (
 			!shouldNetworkRequestBeRecorded(
 				this._url,
-				backendUrl,
+				highlightEndpoints,
 				tracingOrigins,
 			)
 		) {
@@ -81,7 +80,13 @@ export const XHRListener = (
 		}
 
 		const [sessionSecureID, requestId] = createNetworkRequestId(otelEnabled)
-		if (shouldNetworkRequestBeTraced(this._url, tracingOrigins)) {
+		if (
+			shouldNetworkRequestBeTraced(
+				this._url,
+				tracingOrigins,
+				urlBlocklist,
+			)
+		) {
 			this.setRequestHeader(
 				HIGHLIGHT_REQUEST_HEADER,
 				getHighlightRequestHeader(sessionSecureID, requestId),

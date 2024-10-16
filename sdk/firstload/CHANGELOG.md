@@ -1,5 +1,98 @@
 # highlight.run
 
+## 9.5.0
+
+### Minor Changes
+
+-   d94533a: update rrweb to use postcss css parser
+
+## 9.4.4
+
+### Patch Changes
+
+-   f43d3b4: fix full snapshot error when failing to starting rrweb recording
+-   72ec866: fix recording bodies of otel requests
+-   f43d3b4: improve canvas serialization performance and support shadow dom canvases
+-   f43d3b4: fix rrweb replay breaking on invalid inlined css
+
+## 9.4.3
+
+### Patch Changes
+
+-   54557e9: re-release 9.4.2 which included incorrect bundle built from 9.3.4
+
+## 9.4.2
+
+### Patch Changes
+
+-   5213ca3: ensure callback value is returned when not initialized
+
+## 9.4.1
+
+### Patch Changes
+
+-   a95d52b: record pri.highlight.io requests
+-   f432e66: block tracing via x-highlight-request header via urlblocklist
+
+## 9.4.0
+
+### Minor Changes
+
+-   815faa8: fix rrweb postcss replay and live mode
+
+### Patch Changes
+
+-   815faa8: fix live mode breaking due to ischeckout of full snapshot
+
+## 9.3.4
+
+### Patch Changes
+
+-   02f67d0: Fix type error reporting screen orientation
+
+## 9.3.3
+
+### Patch Changes
+
+-   5cc0afd: correctly report clickTextContent as timeline events
+
+## 9.3.2
+
+### Patch Changes
+
+-   be38f68: make client kill switch less likely to trigger by requiring multiple failures
+-   2339697: update opentelemetry dependencies
+-   bbbaeb1: ensure duplicate tab functionality does not break x-highlight-request header
+    corrects issue introduced in 9.3.0 with the x-highlight-request missing the session id
+
+## 9.3.1
+
+### Patch Changes
+
+-   262a07314: revert postcss changes to css parsing in rrweb
+    https://github.com/rrweb-io/rrweb/pull/1458 introduced
+    a new CSS parser which causes issues with certain large CSS files
+
+## 9.3.0
+
+### Minor Changes
+
+-   0a8a9ffdc: add cookie session persistence
+
+### Patch Changes
+
+-   d2e00028a: correctly set x-highlight-request on outgoing fetch/xhr requests with duplicate tab recording.
+    the sessionID in the x-highlight-request would not be set correctly after recent changes
+    corrected the multi-tab behavior to clear the local storage sessionID value to ensure
+    new tabs started unique sessions. corrects bug affecting >=9.1.5
+-   0a8a9ffdc: update otel webjs network span naming
+
+## 9.2.2
+
+### Patch Changes
+
+-   f7fb74a44: add XHR request fallback is sendBeacon fails
+
 ## 9.2.1
 
 ### Patch Changes

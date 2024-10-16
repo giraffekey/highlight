@@ -1,5 +1,130 @@
 # @highlight-run/next
 
+## 7.5.31
+
+### Patch Changes
+
+-   Updated dependencies [d94533a]
+    -   highlight.run@9.5.0
+    -   @highlight-run/node@3.9.3
+    -   @highlight-run/react@7.0.0
+
+## 7.5.30
+
+### Patch Changes
+
+-   Updated dependencies [f43d3b4]
+-   Updated dependencies [72ec866]
+-   Updated dependencies [f43d3b4]
+-   Updated dependencies [f43d3b4]
+    -   highlight.run@9.4.4
+    -   @highlight-run/node@3.9.3
+    -   @highlight-run/react@6.0.4
+
+## 7.5.29
+
+### Patch Changes
+
+-   Updated dependencies [54557e9]
+    -   highlight.run@9.4.3
+    -   @highlight-run/node@3.9.3
+    -   @highlight-run/react@6.0.3
+
+## 7.5.28
+
+### Patch Changes
+
+-   Updated dependencies [5213ca3]
+    -   highlight.run@9.4.2
+    -   @highlight-run/node@3.9.3
+    -   @highlight-run/react@6.0.2
+
+## 7.5.27
+
+### Patch Changes
+
+-   Updated dependencies [a95d52b]
+-   Updated dependencies [f432e66]
+    -   highlight.run@9.4.1
+    -   @highlight-run/node@3.9.3
+    -   @highlight-run/react@6.0.1
+
+## 7.5.26
+
+### Patch Changes
+
+-   5045b23: fix opentelemetry warning from missing dependencies
+-   Updated dependencies [815faa8]
+-   Updated dependencies [815faa8]
+-   Updated dependencies [5045b23]
+    -   highlight.run@9.4.0
+    -   @highlight-run/cloudflare@2.1.8
+    -   @highlight-run/node@3.9.3
+    -   @highlight-run/react@6.0.0
+
+## 7.5.25
+
+### Patch Changes
+
+-   f3db07f: correctly update rewrites for /highlight-events proxy when existing rewrites are defined
+-   Updated dependencies [1e21c52]
+-   Updated dependencies [02f67d0]
+    -   @highlight-run/node@3.9.2
+    -   highlight.run@9.3.4
+    -   @highlight-run/react@5.0.4
+
+## 7.5.24
+
+### Patch Changes
+
+-   Updated dependencies [5cc0afd]
+    -   highlight.run@9.3.3
+    -   @highlight-run/node@3.9.1
+    -   @highlight-run/react@5.0.3
+
+## 7.5.23
+
+### Patch Changes
+
+-   2339697: update opentelemetry dependencies
+-   Updated dependencies [be38f68]
+-   Updated dependencies [2339697]
+-   Updated dependencies [bbbaeb1]
+    -   highlight.run@9.3.2
+    -   @highlight-run/node@3.9.1
+    -   @highlight-run/opentelemetry-sdk-workers@1.0.7
+    -   @highlight-run/react@5.0.2
+    -   @highlight-run/cloudflare@2.1.7
+
+## 7.5.22
+
+### Patch Changes
+
+-   Updated dependencies [262a07314]
+    -   highlight.run@9.3.1
+    -   @highlight-run/node@3.9.0
+    -   @highlight-run/react@5.0.1
+
+## 7.5.21
+
+### Patch Changes
+
+-   Updated dependencies [d2e00028a]
+-   Updated dependencies [0a8a9ffdc]
+-   Updated dependencies [0a8a9ffdc]
+    -   highlight.run@9.3.0
+    -   @highlight-run/node@3.9.0
+    -   @highlight-run/react@5.0.0
+
+## 7.5.20
+
+### Patch Changes
+
+-   Updated dependencies [f7fb74a44]
+    -   highlight.run@9.2.2
+    -   @highlight-run/node@3.9.0
+    -   @highlight-run/react@4.0.2
+
 ## 7.5.19
 
 ### Patch Changes

@@ -4,24 +4,24 @@ import {
 	Button,
 	ButtonIcon,
 	DateRangePreset,
-	IconSolidArrowsExpand,
 	IconSolidChartSquareBar,
 	IconSolidChartSquareLine,
 	IconSolidDocumentReport,
-	IconSolidDotsHorizontal,
-	IconSolidDuplicate,
 	IconSolidExternalLink,
 	IconSolidLoading,
-	IconSolidPencil,
+	IconSolidLocationMarker,
 	IconSolidTable,
-	IconSolidTrash,
-	Menu,
 	presetStartDate,
 	Stack,
 	Text,
 	Tooltip,
 } from '@highlight-run/ui/components'
 import { vars } from '@highlight-run/ui/vars'
+import {
+	FunnelChart,
+	FunnelChartConfig,
+} from '@pages/Graphing/components/FunnelChart'
+import { FunnelDisplay } from '@pages/Graphing/components/types'
 import clsx from 'clsx'
 import _ from 'lodash'
 import moment from 'moment'
@@ -32,7 +32,10 @@ import { CategoricalChartState } from 'recharts/types/chart/types'
 import { loadingIcon } from '@/components/Button/style.css'
 import { useRelatedResource } from '@/components/RelatedResources/hooks'
 import { TIME_FORMAT } from '@/components/Search/SearchForm/constants'
-import { useGetMetricsLazyQuery } from '@/graph/generated/hooks'
+import {
+	GetMetricsQueryResult,
+	useGetMetricsLazyQuery,
+} from '@/graph/generated/hooks'
 import { GetMetricsQuery } from '@/graph/generated/operations'
 import { Maybe, MetricAggregator, ProductType } from '@/graph/generated/schemas'
 import {
@@ -54,17 +57,37 @@ import {
 
 import * as style from './Graph.css'
 
-export type View = 'Line chart' | 'Bar chart' | 'Table'
-export const VIEWS: View[] = ['Line chart', 'Bar chart', 'Table']
-export const VIEW_ICONS = [
-	<IconSolidChartSquareLine size={16} key="line chart" />,
-	<IconSolidChartSquareBar size={16} key="bar chart" />,
-	<IconSolidTable size={16} key="table" />,
+import { EventSelectionStep } from '@pages/Graphing/util'
+import { useGraphContext } from '../context/GraphContext'
+
+export type View = 'Line chart' | 'Bar chart' | 'Funnel chart' | 'Table'
+
+export const VIEW_OPTIONS = [
+	{
+		value: 'Line chart',
+		name: 'Line chart',
+		icon: <IconSolidChartSquareLine size={16} />,
+	},
+	{
+		value: 'Bar chart',
+		name: 'Bar chart / histogram',
+		icon: <IconSolidChartSquareBar size={16} />,
+	},
+	{
+		value: 'Funnel chart',
+		name: 'Funnel chart',
+		icon: <IconSolidLocationMarker size={16} key="funnel chart" />,
+	},
+	{
+		value: 'Table',
+		name: 'Table',
+		icon: <IconSolidTable size={16} />,
+	},
 ]
-export const VIEW_LABELS = ['Line chart', 'Bar chart / histogram', 'Table']
 
 export const TIMESTAMP_KEY = 'Timestamp'
 export const GROUP_KEY = 'Group'
+export const PERCENT_KEY = 'Percent'
 export const BUCKET_MIN_KEY = 'BucketMin'
 export const BUCKET_MAX_KEY = 'BucketMax'
 export const NO_GROUP_PLACEHOLDER = '<empty>'
@@ -84,10 +107,12 @@ export type ViewConfig =
 	| LineChartConfig
 	| BarChartConfig
 	| PieChartConfig
+	| FunnelChartConfig
 	| TableConfig
 	| ListConfig
 
 export interface ChartProps<TConfig> {
+	id?: string
 	title: string
 	productType: ProductType
 	projectId: string
@@ -97,21 +122,20 @@ export interface ChartProps<TConfig> {
 	query: string
 	metric: string
 	functionType: MetricAggregator
-	groupByKey?: string
+	groupByKeys?: string[]
 	bucketByKey?: string
 	bucketCount?: number
 	bucketByWindow?: number
 	limit?: number
 	limitFunctionType?: MetricAggregator
 	limitMetric?: string
+	funnelSteps?: EventSelectionStep[]
 	viewConfig: TConfig
 	disabled?: boolean
-	onClone?: () => void
-	onDelete?: () => void
-	onExpand?: () => void
-	onEdit?: () => void
+	height?: number
 	setTimeRange?: SetTimeRange
 	loadExemplars?: LoadExemplars
+	variables?: Map<string, string[]>
 }
 
 export interface InnerChartProps<TConfig> {
@@ -160,12 +184,18 @@ const strokeColors = [
 	'#3E63DD',
 ]
 
+export interface TooltipSettings {
+	dashed?: boolean
+	funnelMode?: true
+}
+
 export const useGraphCallbacks = (
 	xAxisMetric: string,
 	yAxisMetric: string,
 	yAxisFunction: string,
 	setTimeRange?: SetTimeRange,
 	loadExemplars?: LoadExemplars,
+	tooltipSettings?: TooltipSettings,
 ) => {
 	const [refAreaStart, setRefAreaStart] = useState<number | undefined>()
 	const [refAreaEnd, setRefAreaEnd] = useState<number | undefined>()
@@ -190,7 +220,7 @@ export const useGraphCallbacks = (
 
 	const onMouseDown = allowDrag
 		? (e: CategoricalChartState) => {
-				if (frozenTooltip || !loadExemplars) {
+				if (frozenTooltip) {
 					return
 				}
 
@@ -199,7 +229,8 @@ export const useGraphCallbacks = (
 				if (
 					chartRect !== undefined &&
 					tooltipRect !== undefined &&
-					frozenTooltip === undefined
+					frozenTooltip === undefined &&
+					loadExemplars
 				) {
 					e.chartX = tooltipRect.x - chartRect.x
 					e.chartY = tooltipRect.y - chartRect.y
@@ -215,29 +246,22 @@ export const useGraphCallbacks = (
 				if (e.activeLabel !== undefined && !frozenTooltip) {
 					setRefAreaStart(Number(e.activeLabel))
 				}
-		  }
+			}
 		: undefined
 
 	const onMouseMove = allowDrag
 		? (e: CategoricalChartState) => {
-				if (frozenTooltip) {
-					return
-				}
-
 				setMouseMoveState(e)
 
 				if (refAreaStart !== undefined && e.activeLabel !== undefined) {
 					setRefAreaEnd(Number(e.activeLabel))
+					setFrozenTooltip(undefined)
 				}
-		  }
+			}
 		: undefined
 
 	const onMouseUp = allowDrag
 		? () => {
-				if (frozenTooltip) {
-					return
-				}
-
 				if (
 					refAreaStart !== undefined &&
 					refAreaEnd !== undefined &&
@@ -254,7 +278,7 @@ export const useGraphCallbacks = (
 				}
 				setRefAreaStart(undefined)
 				setRefAreaEnd(undefined)
-		  }
+			}
 		: undefined
 
 	const onMouseLeave = () => {
@@ -273,11 +297,17 @@ export const useGraphCallbacks = (
 				tooltipRef,
 				onMouseLeave,
 				loadExemplars,
+				tooltipSettings?.funnelMode,
 			)}
 			cursor={
 				frozenTooltip
 					? false
-					: { stroke: '#C8C7CB', strokeDasharray: 4 }
+					: {
+							stroke: '#C8C7CB',
+							strokeDasharray: tooltipSettings?.dashed
+								? 4
+								: undefined,
+						}
 			}
 			isAnimationActive={false}
 			wrapperStyle={{
@@ -436,6 +466,7 @@ const getCustomTooltip =
 		tooltipRef?: React.MutableRefObject<HTMLDivElement | null>,
 		onMouseLeave?: () => void,
 		loadExemplars?: LoadExemplars,
+		funnelMode?: true,
 	) =>
 	({ active, payload, label }: any) => {
 		if (frozenTooltip !== undefined) {
@@ -496,15 +527,27 @@ const getCustomTooltip =
 									cssClass={style.tooltipText}
 								></Text>
 							</Badge>
-							<Text
-								lines="1"
-								size="xSmall"
-								weight="medium"
-								color="default"
-								cssClass={style.tooltipText}
-							>
-								{p.name ? p.name : yAxisFunction}
-							</Text>
+							{funnelMode ? (
+								<Text
+									lines="1"
+									size="xSmall"
+									weight="medium"
+									color="default"
+									cssClass={style.tooltipText}
+								>
+									{(p.payload[PERCENT_KEY] * 100).toFixed(1)}%
+								</Text>
+							) : (
+								<Text
+									lines="1"
+									size="xxSmall"
+									weight="medium"
+									color="default"
+									cssClass={style.tooltipText}
+								>
+									{p.name ? p.name : yAxisFunction}
+								</Text>
+							)}
 						</Box>
 						{frozenTooltip && (
 							<ButtonIcon
@@ -604,6 +647,12 @@ export const getViewConfig = (
 			showLegend: true,
 			display: display as BarDisplay,
 		}
+	} else if (viewType === 'Funnel chart') {
+		viewConfig = {
+			type: viewType,
+			showLegend: true,
+			display: display as FunnelDisplay,
+		}
 	} else if (viewType === 'Table') {
 		viewConfig = {
 			type: viewType,
@@ -625,7 +674,7 @@ export const useGraphData = (
 ) => {
 	return useMemo(() => {
 		let data: any[] | undefined
-		if (metrics?.metrics.buckets) {
+		if (metrics?.metrics?.buckets) {
 			if (xAxisMetric !== GROUP_KEY) {
 				data = []
 				for (let i = 0; i < metrics.metrics.bucket_count; i++) {
@@ -638,7 +687,7 @@ export const useGraphData = (
 
 				for (const b of metrics.metrics.buckets) {
 					const seriesKey = hasGroups
-						? b.group.join(' ') || NO_GROUP_PLACEHOLDER
+						? b.group.join(', ') || NO_GROUP_PLACEHOLDER
 						: b.metric_type
 					data[b.bucket_id][xAxisMetric] =
 						(b.bucket_min + b.bucket_max) / 2
@@ -650,7 +699,7 @@ export const useGraphData = (
 				data = []
 				for (const b of metrics.metrics.buckets) {
 					data.push({
-						[GROUP_KEY]: b.group.join(' '),
+						[GROUP_KEY]: b.group.join(', '),
 						'': b.metric_value,
 					})
 				}
@@ -660,21 +709,100 @@ export const useGraphData = (
 	}, [metrics?.metrics.bucket_count, metrics?.metrics.buckets, xAxisMetric])
 }
 
+export const useFunnelData = (
+	results: GetMetricsQuery[] | undefined,
+	funnelSteps: EventSelectionStep[] | undefined,
+) => {
+	return useMemo(() => {
+		if (!results?.length || !results[0]?.metrics) return
+		const buckets: { [key: number]: { value: number; percent: number } } =
+			{}
+		results.forEach((r, idx) => {
+			if (r?.metrics?.buckets) {
+				r.metrics.buckets.forEach((b) => {
+					const prev = buckets[idx - 1]?.value ?? 0
+					const value =
+						(buckets[idx]?.value ?? 0) + (b?.metric_value ?? 0)
+					buckets[idx] = {
+						value,
+						percent: prev > 0 ? value / prev : 1,
+					}
+				})
+			}
+		})
+
+		return Object.values(buckets).map((r, idx) => {
+			const key =
+				funnelSteps?.at(idx)?.title || funnelSteps?.at(idx)?.query || ''
+			return {
+				[GROUP_KEY]: key,
+				[PERCENT_KEY]: r.percent,
+				[key]: r.value,
+			}
+		})
+	}, [funnelSteps, results])
+}
+
 export const useGraphSeries = (
 	data: any[] | undefined,
 	xAxisMetric: string,
 ) => {
-	const series = useMemo(() => {
-		const excluded = [xAxisMetric, BUCKET_MIN_KEY, BUCKET_MAX_KEY]
+	return useMemo(() => {
+		const excluded = [
+			xAxisMetric,
+			BUCKET_MIN_KEY,
+			BUCKET_MAX_KEY,
+			PERCENT_KEY,
+		]
 		return _.uniq(data?.flatMap((d) => Object.keys(d))).filter(
 			(key) => !excluded.includes(key),
 		)
 	}, [data, xAxisMetric])
-	return series
 }
 
 const POLL_INTERVAL_VALUE = 1000 * 60
 const LONGER_POLL_INTERVAL_VALUE = 1000 * 60 * 5
+
+const replaceQueryVariables = (
+	text: string,
+	vars: Map<string, string[]> | undefined,
+) => {
+	vars?.forEach((values, key) => {
+		let replacementText = ''
+		if (values.length === 1) {
+			replacementText = values[0]
+		} else if (values.length > 1) {
+			replacementText = `(${values.join(' OR ')})`
+		}
+		text = text?.replaceAll(`$${key}`, replacementText)
+	})
+	return text
+}
+
+const matchParamVariables = (
+	text: string | string[],
+	vars: Map<string, string[]> | undefined,
+): string[] => {
+	if (Array.isArray(text)) {
+		const results: string[] = []
+		text.forEach((t) => {
+			const values = vars?.get(t)
+			if (values !== undefined) {
+				results.push(...values)
+			} else {
+				results.push(t)
+			}
+		})
+		return results
+	} else {
+		const values = vars?.get(text)
+		if (values !== undefined) {
+			return values
+		} else {
+			return [text]
+		}
+	}
+}
 
 const Graph = ({
 	productType,
@@ -684,40 +812,40 @@ const Graph = ({
 	query,
 	metric,
 	functionType,
-	groupByKey,
+	groupByKeys,
 	bucketByKey,
 	bucketByWindow,
 	bucketCount,
 	limit,
 	limitFunctionType,
 	limitMetric,
+	funnelSteps,
 	title,
+	id,
 	viewConfig,
 	disabled,
-	onClone,
-	onDelete,
-	onExpand,
-	onEdit,
+	height,
 	setTimeRange,
 	selectedPreset,
+	variables,
 	children,
 }: React.PropsWithChildren<ChartProps<ViewConfig>>) => {
-	const [graphHover, setGraphHover] = useState(false)
+	const { setGraphData } = useGraphContext()
 	const queriedBucketCount = bucketByKey !== undefined ? bucketCount : 1
-	const showMenu =
-		onDelete !== undefined || onExpand !== undefined || onEdit !== undefined
 
 	const pollTimeout = useRef<number>()
 	const [pollInterval, setPollInterval] = useState<number>(0)
 	const [fetchStart, setFetchStart] = useState<Date>()
 	const [fetchEnd, setFetchEnd] = useState<Date>()
+	const [results, setResults] = useState<GetMetricsQuery[]>()
+	const [loading, setLoading] = useState<boolean>(false)
 
 	const { set } = useRelatedResource()
 
 	const loadExemplars = (
 		bucketMin: number | undefined,
 		bucketMax: number | undefined,
-		group: string | undefined,
+		groups: string | undefined,
 	) => {
 		let relatedResourceType: 'logs' | 'errors' | 'sessions' | 'traces'
 		switch (productType) {
@@ -733,20 +861,22 @@ const Graph = ({
 			case ProductType.Traces:
 				relatedResourceType = 'traces'
 				break
+			case ProductType.Metrics:
+				relatedResourceType = 'sessions'
+				break
 			default:
 				return
 		}
 
-		let relatedResourceQuery = query
-		if (groupByKey !== undefined) {
-			if (relatedResourceQuery !== '') {
-				relatedResourceQuery += ' '
-			}
-			if (group !== NO_GROUP_PLACEHOLDER && group !== '') {
-				relatedResourceQuery += `${groupByKey}="${group}"`
-			} else {
-				relatedResourceQuery += `${groupByKey} not exists`
-			}
+		let relatedResourceQuery = replaceQueryVariables(query, variables)
+		if (groupByKeys !== undefined && groupByKeys.length > 0) {
+			groups?.split(', ').forEach((group, idx) => {
+				if (group !== NO_GROUP_PLACEHOLDER && group !== '') {
+					relatedResourceQuery += ` ${groupByKeys[idx]}="${group}"`
+				} else {
+					relatedResourceQuery += ` ${groupByKeys[idx]} not exists`
+				}
+			})
 		}
 		if (![undefined, TIMESTAMP_KEY].includes(bucketByKey)) {
 			if (relatedResourceQuery !== '') {
@@ -770,12 +900,7 @@ const Graph = ({
 		})
 	}
 
-	const [
-		getMetrics,
-		{ data: newMetrics, called, loading, previousData: previousMetrics },
-	] = useGetMetricsLazyQuery()
-
-	const metrics = loading ? previousMetrics : newMetrics
+	const [getMetrics, { called }] = useGetMetricsLazyQuery()
 
 	const rebaseFetchTime = useCallback(() => {
 		if (!selectedPreset) {
@@ -795,6 +920,10 @@ const Graph = ({
 		setFetchStart(newStartFetch)
 		setFetchEnd(moment().toDate())
 	}, [selectedPreset, startDate, endDate])
+
+	const xAxisMetric = bucketByKey !== undefined ? bucketByKey : GROUP_KEY
+	const yAxisMetric = functionType === MetricAggregator.Count ? '' : metric
+	const yAxisFunction = functionType
 
 	// set the fetch dates and poll interval when selected date changes
 	useEffect(() => {
@@ -818,37 +947,91 @@ const Graph = ({
 			.startOf('minute')
 			.subtract(overage, 'minute')
 
-		getMetrics({
-			variables: {
-				product_type: productType,
-				project_id: projectId,
-				params: {
-					date_range: {
-						start_date: start.format(TIME_FORMAT),
-						end_date: end.format(TIME_FORMAT),
-					},
-					query: query,
+		const getMetricsVariables = {
+			product_type: productType,
+			project_id: projectId,
+			params: {
+				date_range: {
+					start_date: start.format(TIME_FORMAT),
+					end_date: end.format(TIME_FORMAT),
 				},
-				column: metric,
-				metric_types: [functionType],
-				group_by: groupByKey !== undefined ? [groupByKey] : [],
-				bucket_by:
-					bucketByKey !== undefined ? bucketByKey : TIMESTAMP_KEY,
-				bucket_window: bucketByWindow,
-				bucket_count: queriedBucketCount,
-				limit: limit,
-				limit_aggregator: limitFunctionType,
-				limit_column: limitMetric,
+				query: replaceQueryVariables(query, variables),
 			},
-		}).then(() => {
-			// create another poll timeout if pollInterval is set
-			if (pollInterval) {
-				pollTimeout.current = setTimeout(
-					rebaseFetchTime,
-					pollInterval,
-				) as unknown as number
+			column: matchParamVariables(yAxisMetric, variables).at(0) ?? '',
+			metric_types: [functionType],
+			group_by:
+				groupByKeys !== undefined
+					? matchParamVariables(groupByKeys, variables)
+					: [],
+			bucket_by:
+				bucketByKey !== undefined
+					? (matchParamVariables(bucketByKey, variables).at(0) ?? '')
+					: TIMESTAMP_KEY,
+			bucket_window: bucketByWindow,
+			bucket_count: queriedBucketCount,
+			limit: limit,
+			limit_aggregator: limitFunctionType,
+			limit_column: limitMetric
+				? matchParamVariables(limitMetric, variables).at(0)
+				: undefined,
+		}
+
+		setLoading(true)
+		let getMetricsPromises: Promise<GetMetricsQueryResult>[] = []
+		if (funnelSteps?.length) {
+			let promise: Promise<GetMetricsQueryResult> = Promise.resolve(
+				{} as GetMetricsQueryResult,
+			)
+			for (const step of funnelSteps) {
+				promise = promise.then((result) => {
+					// once events have other session attributes, we can support per-user aggregation
+					const keys = result.data?.metrics.buckets?.map(
+						(b) => b.group[0],
+					)
+					// if previous step exists but no result, we should have no results
+					if (keys?.length && keys.at(0) === '') {
+						return Promise.resolve({
+							data: {
+								metrics: { buckets: [{}] },
+							},
+						} as GetMetricsQueryResult)
+					}
+					const previousStepFilter = keys
+						?.map((k) => `secure_session_id=${k}`)
+						?.join(' OR ')
+					return getMetrics({
+						variables: {
+							...getMetricsVariables,
+							params: {
+								...getMetricsVariables.params,
+								query: keys?.length
+									? `${step.query} AND (${previousStepFilter})`
+									: step.query,
+							},
+						},
+					})
+				})
+				getMetricsPromises.push(promise)
 			}
-		})
+		} else {
+			getMetricsPromises = [
+				getMetrics({ variables: getMetricsVariables }),
+			]
+		}
+		Promise.all(getMetricsPromises)
+			.then((results: GetMetricsQueryResult[]) => {
+				setResults(results.filter((r) => r.data).map((r) => r.data!))
+			})
+			.finally(() => {
+				setLoading(false)
+				// create another poll timeout if pollInterval is set
+				if (pollInterval) {
+					pollTimeout.current = setTimeout(
+						rebaseFetchTime,
+						pollInterval,
+					) as unknown as number
+				}
+			})
 
 		return () => {
 			if (!!pollTimeout.current) {
@@ -864,25 +1047,35 @@ const Graph = ({
 		fetchStart,
 		functionType,
 		getMetrics,
-		groupByKey,
+		groupByKeys,
 		limit,
 		limitFunctionType,
 		limitMetric,
-		metric,
+		funnelSteps,
+		yAxisMetric,
 		productType,
 		projectId,
 		queriedBucketCount,
 		query,
+		variables,
 	])
 
-	const xAxisMetric = bucketByKey !== undefined ? bucketByKey : GROUP_KEY
-	const yAxisMetric = functionType === MetricAggregator.Count ? '' : metric
-	const yAxisFunction = functionType
-
-	const data = useGraphData(metrics, xAxisMetric)
+	const graphData = useGraphData(results?.at(0), xAxisMetric)
+	const funnelData = useFunnelData(results, funnelSteps)
+	const data = viewConfig.type === 'Funnel chart' ? funnelData : graphData
 	const series = useGraphSeries(data, xAxisMetric)
 
 	const [spotlight, setSpotlight] = useState<number | undefined>()
+
+	useEffect(() => {
+		if (id && data) {
+			setGraphData((graphData) =>
+				graphData[id]?.length
+					? graphData
+					: { ...graphData, [id]: data },
+			)
+		}
+	}, [data, id, setGraphData])
 
 	// Reset spotlight when `series` is updated
 	useEffect(() => {
@@ -956,6 +1149,69 @@ const Graph = ({
 					</BarChart>
 				)
 				break
+			case 'Funnel chart':
+				if (viewConfig.display === 'Bar Chart') {
+					innerChart = (
+						<BarChart
+							data={data}
+							xAxisMetric={xAxisMetric}
+							yAxisMetric={yAxisMetric}
+							yAxisFunction={yAxisFunction}
+							viewConfig={{
+								shadeToPrevious: true,
+								showLegend: true,
+								type: 'Bar chart',
+								display: 'Stacked',
+								tooltipSettings: { funnelMode: true },
+							}}
+							series={series}
+							spotlight={spotlight}
+							setTimeRange={setTimeRange}
+							loadExemplars={loadExemplars}
+							showGrid
+						>
+							{children}
+						</BarChart>
+					)
+				} else if (viewConfig.display === 'Line Chart') {
+					innerChart = (
+						<LineChart
+							data={data}
+							xAxisMetric={xAxisMetric}
+							yAxisMetric={yAxisMetric}
+							yAxisFunction={yAxisFunction}
+							viewConfig={{
+								showLegend: true,
+								type: 'Line chart',
+								display: 'Stacked area',
+								tooltipSettings: { funnelMode: true },
+							}}
+							series={series}
+							spotlight={spotlight}
+							setTimeRange={setTimeRange}
+							loadExemplars={loadExemplars}
+							showGrid
+						>
+							{children}
+						</LineChart>
+					)
+				} else if (viewConfig.display === 'Vertical Funnel') {
+					innerChart = (
+						<FunnelChart
+							data={data}
+							xAxisMetric={xAxisMetric}
+							yAxisMetric={yAxisMetric}
+							yAxisFunction={yAxisFunction}
+							viewConfig={viewConfig}
+							series={series}
+							spotlight={spotlight}
+							setTimeRange={setTimeRange}
+						>
+							{children}
+						</FunnelChart>
+					)
+				}
+				break
 			case 'Table':
 				innerChart = (
 					<MetricTable
@@ -985,12 +1241,6 @@ const Graph = ({
 			flexDirection="column"
 			gap="8"
 			justifyContent="space-between"
-			onMouseEnter={() => {
-				setGraphHover(true)
-			}}
-			onMouseLeave={() => {
-				setGraphHover(false)
-			}}
 		>
 			<Box
 				display="flex"
@@ -1000,88 +1250,14 @@ const Graph = ({
 				<Text size="small" color="default" cssClass={style.titleText}>
 					{title || 'Untitled metric view'}
 				</Text>
-				{showMenu && graphHover && !disabled && called && (
-					<Box
-						cssClass={clsx(style.titleText, {
-							[style.hiddenMenu]: !graphHover,
-						})}
-					>
-						{onExpand !== undefined && (
-							<Button
-								size="xSmall"
-								emphasis="low"
-								kind="secondary"
-								iconLeft={<IconSolidArrowsExpand />}
-								onClick={onExpand}
-							/>
-						)}
-						{onEdit !== undefined && (
-							<Button
-								size="xSmall"
-								emphasis="low"
-								kind="secondary"
-								iconLeft={<IconSolidPencil />}
-								onClick={onEdit}
-							/>
-						)}
-						{(onDelete || onClone) && (
-							<Menu>
-								<Menu.Button
-									size="medium"
-									emphasis="low"
-									kind="secondary"
-									iconLeft={<IconSolidDotsHorizontal />}
-									onClick={(e: any) => {
-										e.stopPropagation()
-									}}
-								/>
-								<Menu.List>
-									{onClone && (
-										<Menu.Item
-											onClick={(e) => {
-												e.stopPropagation()
-												onClone()
-											}}
-										>
-											<Box
-												display="flex"
-												alignItems="center"
-												gap="4"
-											>
-												<IconSolidDuplicate />
-												Clone metric view
-											</Box>
-										</Menu.Item>
-									)}
-									{onDelete && (
-										<Menu.Item
-											onClick={(e) => {
-												e.stopPropagation()
-												onDelete()
-											}}
-										>
-											<Box
-												display="flex"
-												alignItems="center"
-												gap="4"
-											>
-												<IconSolidTrash />
-												Delete metric view
-											</Box>
-										</Menu.Item>
-									)}
-								</Menu.List>
-							</Menu>
-						)}
-					</Box>
-				)}
 			</Box>
 			{called && (
 				<Box
-					height="full"
-					maxHeight="screen"
+					style={{ height: height ?? '100%' }}
 					key={series.join(';')} // Hacky but recharts' ResponsiveContainer has issues when this height changes so just rerender the whole thing
-					cssClass={clsx({ [style.disabled]: disabled })}
+					cssClass={clsx({
+						[style.disabled]: disabled,
+					})}
 					position="relative"
 				>
 					{loading && (
@@ -1142,7 +1318,7 @@ const Graph = ({
 																idx,
 																key,
 																strokeColors,
-														  )
+															)
 														: undefined,
 												}}
 												cssClass={style.legendDot}

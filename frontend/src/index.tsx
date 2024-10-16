@@ -1,9 +1,9 @@
 import '@fontsource/poppins'
 import '@highlight-run/ui/styles.css'
+import 'rrweb/dist/style.css'
+import './__generated/antd.css'
 import './index.css'
 import './style/tailwind.css'
-import './__generated/antd.css'
-import 'rrweb/dist/style.css'
 
 import { ApolloError, ApolloProvider } from '@apollo/client'
 import { AuthContextProvider, AuthRole } from '@authentication/AuthContext'
@@ -51,6 +51,7 @@ import { OTLP_ENDPOINT, PUBLIC_GRAPH_URI } from '@/constants'
 import { SIGN_IN_ROUTE } from '@/pages/Auth/AuthRouter'
 import { authRedirect } from '@/pages/Auth/utils'
 import { onlyAllowHighlightStaff } from '@/util/authorization/authorizationUtils'
+import { omit } from 'lodash'
 
 document.body.className = 'highlight-light-theme'
 
@@ -71,6 +72,11 @@ const clientDebugKey = 'highlight-client-debug'
 const clientDebug = window.localStorage.getItem(clientDebugKey)
 if (!clientDebug) {
 	window.localStorage.setItem(clientDebugKey, 'false')
+}
+const clientOtelKey = 'highlight-client-otel'
+const clientOtel = window.localStorage.getItem(clientOtelKey)
+if (!clientOtel) {
+	window.localStorage.setItem(clientOtelKey, 'true')
 }
 const shouldDebugLog = clientDebug === 'true'
 const options: HighlightOptions = {
@@ -96,12 +102,7 @@ const options: HighlightOptions = {
 			'web-socket-events-compressed',
 		],
 	},
-	tracingOrigins: [
-		'highlight.io',
-		'highlight.run',
-		'localhost',
-		'localhost:8082',
-	],
+	tracingOrigins: ['pri.highlight.io', 'localhost:8082/private'],
 	integrations: {
 		amplitude: {
 			apiKey: 'fb83ae15d6122ef1b3f0ecdaa3393fea',
@@ -122,7 +123,7 @@ const options: HighlightOptions = {
 	sessionShortcut: 'alt+1,command+`,alt+esc',
 	version: import.meta.env.REACT_APP_COMMIT_SHA ?? '1.0.0',
 	serviceName: 'frontend',
-	enableOtelTracing: true,
+	enableOtelTracing: clientOtel !== 'false',
 	otlpEndpoint: OTLP_ENDPOINT,
 }
 const favicon = document.querySelector("link[rel~='icon']") as any
@@ -307,24 +308,22 @@ const AuthenticationRoleRouter = () => {
 	)
 
 	const fetchAdmin = useCallback(async () => {
-		H.startSpan('adminFetch', async () => {
-			if (loading || !user) {
-				return
-			}
+		if (loading || !user) {
+			return
+		}
 
-			const variables: any = {}
-			if (workspaceId) {
-				variables.workspace_id = workspaceId
-			} else if (projectId) {
-				variables.project_id = projectId
-			}
+		const variables: any = {}
+		if (workspaceId) {
+			variables.workspace_id = workspaceId
+		} else if (projectId) {
+			variables.project_id = projectId
+		}
 
-			if (!called) {
-				await getAdminQuery({ variables })
-			} else {
-				await refetch!()
-			}
-		})
+		if (!called) {
+			await getAdminQuery({ variables })
+		} else {
+			await refetch!()
+		}
 	}, [called, getAdminQuery, loading, projectId, refetch, user, workspaceId])
 
 	useEffect(() => {
@@ -366,6 +365,15 @@ const AuthenticationRoleRouter = () => {
 				analytics.identify(adminData.id, {
 					'Project ID': data.project?.id,
 					'Workspace ID': data.project?.workspace?.id,
+					...Object.entries(omit(adminData, ['__typename'])).reduce(
+						(acc, [key, value]) => {
+							if (value) {
+								acc[key] = value.toString()
+							}
+							return acc
+						},
+						{} as Record<string, string>,
+					),
 				})
 			},
 		})
@@ -383,7 +391,7 @@ const AuthenticationRoleRouter = () => {
 		<AuthContextProvider
 			value={{
 				role: authRole,
-				admin: isLoggedIn ? adminData ?? undefined : undefined,
+				admin: isLoggedIn ? (adminData ?? undefined) : undefined,
 				workspaceRole: adminRole || undefined,
 				isAuthLoading,
 				isLoggedIn,

@@ -738,6 +738,17 @@ export type Field = {
 	value: Scalars['String']
 }
 
+export type FunnelStep = {
+	__typename?: 'FunnelStep'
+	query: Scalars['String']
+	title: Scalars['String']
+}
+
+export type FunnelStepInput = {
+	query: Scalars['String']
+	title: Scalars['String']
+}
+
 export type GitHubRepo = {
 	__typename?: 'GitHubRepo'
 	key: Scalars['String']
@@ -756,9 +767,11 @@ export type Graph = {
 	__typename?: 'Graph'
 	bucketByKey?: Maybe<Scalars['String']>
 	bucketCount?: Maybe<Scalars['Int']>
+	bucketInterval?: Maybe<Scalars['Int']>
 	display?: Maybe<Scalars['String']>
 	functionType: MetricAggregator
-	groupByKey?: Maybe<Scalars['String']>
+	funnelSteps?: Maybe<Array<FunnelStep>>
+	groupByKeys?: Maybe<Scalars['StringArray']>
 	id: Scalars['ID']
 	limit?: Maybe<Scalars['Int']>
 	limitFunctionType?: Maybe<MetricAggregator>
@@ -775,9 +788,11 @@ export type GraphInput = {
 	afterGraphId?: InputMaybe<Scalars['ID']>
 	bucketByKey?: InputMaybe<Scalars['String']>
 	bucketCount?: InputMaybe<Scalars['Int']>
+	bucketInterval?: InputMaybe<Scalars['Int']>
 	display?: InputMaybe<Scalars['String']>
 	functionType: MetricAggregator
-	groupByKey?: InputMaybe<Scalars['String']>
+	funnelSteps?: InputMaybe<Array<FunnelStepInput>>
+	groupByKeys?: InputMaybe<Scalars['StringArray']>
 	id?: InputMaybe<Scalars['ID']>
 	limit?: InputMaybe<Scalars['Int']>
 	limitFunctionType?: InputMaybe<MetricAggregator>
@@ -1190,18 +1205,15 @@ export type Mutation = {
 	createAdmin: Admin
 	createAlert?: Maybe<Alert>
 	createCloudflareProxy: Scalars['String']
-	createErrorAlert?: Maybe<ErrorAlert>
 	createErrorComment?: Maybe<ErrorComment>
 	createErrorCommentForExistingIssue?: Maybe<ErrorComment>
 	createErrorTag: ErrorTag
 	createIssueForErrorComment?: Maybe<ErrorComment>
 	createIssueForSessionComment?: Maybe<SessionComment>
-	createLogAlert?: Maybe<LogAlert>
 	createMetricMonitor?: Maybe<MetricMonitor>
 	createOrUpdateStripeSubscription?: Maybe<Scalars['String']>
 	createProject?: Maybe<Project>
 	createSavedSegment?: Maybe<SavedSegment>
-	createSessionAlert?: Maybe<SessionAlert>
 	createSessionComment?: Maybe<SessionComment>
 	createSessionCommentWithExistingIssue?: Maybe<SessionComment>
 	createWorkspace?: Maybe<Workspace>
@@ -1309,6 +1321,7 @@ export type MutationChangeProjectMembershipArgs = {
 
 export type MutationCreateAlertArgs = {
 	below_threshold?: InputMaybe<Scalars['Boolean']>
+	default?: InputMaybe<Scalars['Boolean']>
 	destinations: Array<AlertDestinationInput>
 	function_column?: InputMaybe<Scalars['String']>
 	function_type: MetricAggregator
@@ -1325,22 +1338,6 @@ export type MutationCreateAlertArgs = {
 export type MutationCreateCloudflareProxyArgs = {
 	proxy_subdomain: Scalars['String']
 	workspace_id: Scalars['ID']
-}
-
-export type MutationCreateErrorAlertArgs = {
-	count_threshold: Scalars['Int']
-	default?: InputMaybe<Scalars['Boolean']>
-	discord_channels: Array<DiscordChannelInput>
-	emails: Array<InputMaybe<Scalars['String']>>
-	frequency: Scalars['Int']
-	microsoft_teams_channels: Array<MicrosoftTeamsChannelInput>
-	name: Scalars['String']
-	project_id: Scalars['ID']
-	query: Scalars['String']
-	regex_groups: Array<InputMaybe<Scalars['String']>>
-	slack_channels: Array<InputMaybe<SanitizedSlackChannelInput>>
-	threshold_window: Scalars['Int']
-	webhook_destinations: Array<WebhookDestinationInput>
 }
 
 export type MutationCreateErrorCommentArgs = {
@@ -1406,10 +1403,6 @@ export type MutationCreateIssueForSessionCommentArgs = {
 	time: Scalars['Float']
 }
 
-export type MutationCreateLogAlertArgs = {
-	input: LogAlertInput
-}
-
 export type MutationCreateMetricMonitorArgs = {
 	aggregator: MetricAggregator
 	discord_channels: Array<DiscordChannelInput>
@@ -1439,10 +1432,6 @@ export type MutationCreateSavedSegmentArgs = {
 	name: Scalars['String']
 	project_id: Scalars['ID']
 	query: Scalars['String']
-}
-
-export type MutationCreateSessionAlertArgs = {
-	input: SessionAlertInput
 }
 
 export type MutationCreateSessionCommentArgs = {
@@ -2030,6 +2019,7 @@ export enum PlanType {
 
 export enum ProductType {
 	Errors = 'Errors',
+	Events = 'Events',
 	Logs = 'Logs',
 	Metrics = 'Metrics',
 	Sessions = 'Sessions',
@@ -2110,6 +2100,9 @@ export type Query = {
 	event_chunk_url: Scalars['String']
 	event_chunks: Array<EventChunk>
 	events?: Maybe<Array<Maybe<Scalars['Any']>>>
+	events_key_values: Array<Scalars['String']>
+	events_keys: Array<QueryKey>
+	events_metrics: MetricsBuckets
 	existing_logs_traces: Array<Scalars['String']>
 	field_suggestion?: Maybe<Array<Maybe<Field>>>
 	generate_zapier_access_token: Scalars['String']
@@ -2142,7 +2135,6 @@ export type Query = {
 	logs_key_values: Array<Scalars['String']>
 	logs_keys: Array<QueryKey>
 	logs_metrics: MetricsBuckets
-	logs_total_count: Scalars['UInt64']
 	match_error_tag?: Maybe<Array<Maybe<MatchedErrorTag>>>
 	metric_monitors: Array<Maybe<MetricMonitor>>
 	metric_tag_values: Array<Scalars['String']>
@@ -2172,7 +2164,6 @@ export type Query = {
 	serviceByName?: Maybe<Service>
 	services?: Maybe<ServiceConnection>
 	session?: Maybe<Session>
-	sessionLogs: Array<LogEdge>
 	session_comment_tags_for_project: Array<SessionCommentTag>
 	session_comments: Array<Maybe<SessionComment>>
 	session_comments_for_admin: Array<Maybe<SessionComment>>
@@ -2188,7 +2179,6 @@ export type Query = {
 	sessions_key_values: Array<Scalars['String']>
 	sessions_keys: Array<QueryKey>
 	sessions_metrics: MetricsBuckets
-	sessions_report: Array<SessionsReportRow>
 	slack_channel_suggestion: Array<SanitizedSlackChannel>
 	sourcemap_files: Array<S3File>
 	sourcemap_versions: Array<Scalars['String']>
@@ -2476,6 +2466,37 @@ export type QueryEventsArgs = {
 	session_secure_id: Scalars['String']
 }
 
+export type QueryEvents_Key_ValuesArgs = {
+	count?: InputMaybe<Scalars['Int']>
+	date_range: DateRangeRequiredInput
+	event?: InputMaybe<Scalars['String']>
+	key_name: Scalars['String']
+	project_id: Scalars['ID']
+	query?: InputMaybe<Scalars['String']>
+}
+
+export type QueryEvents_KeysArgs = {
+	date_range: DateRangeRequiredInput
+	event?: InputMaybe<Scalars['String']>
+	project_id: Scalars['ID']
+	query?: InputMaybe<Scalars['String']>
+	type?: InputMaybe<KeyType>
+}
+
+export type QueryEvents_MetricsArgs = {
+	bucket_by: Scalars['String']
+	bucket_count?: InputMaybe<Scalars['Int']>
+	bucket_window?: InputMaybe<Scalars['Int']>
+	column: Scalars['String']
+	group_by: Array<Scalars['String']>
+	limit?: InputMaybe<Scalars['Int']>
+	limit_aggregator?: InputMaybe<MetricAggregator>
+	limit_column?: InputMaybe<Scalars['String']>
+	metric_types: Array<MetricAggregator>
+	params: QueryInput
+	project_id: Scalars['ID']
+}
+
 export type QueryExisting_Logs_TracesArgs = {
 	date_range: DateRangeRequiredInput
 	project_id: Scalars['ID']
@@ -2558,15 +2579,17 @@ export type QueryJira_ProjectsArgs = {
 export type QueryKey_ValuesArgs = {
 	count?: InputMaybe<Scalars['Int']>
 	date_range: DateRangeRequiredInput
+	event?: InputMaybe<Scalars['String']>
 	key_name: Scalars['String']
-	product_type: ProductType
+	product_type?: InputMaybe<ProductType>
 	project_id: Scalars['ID']
 	query?: InputMaybe<Scalars['String']>
 }
 
 export type QueryKeysArgs = {
 	date_range: DateRangeRequiredInput
-	product_type: ProductType
+	event?: InputMaybe<Scalars['String']>
+	product_type?: InputMaybe<ProductType>
 	project_id: Scalars['ID']
 	query?: InputMaybe<Scalars['String']>
 	type?: InputMaybe<KeyType>
@@ -2599,6 +2622,7 @@ export type QueryLogsArgs = {
 	at?: InputMaybe<Scalars['String']>
 	before?: InputMaybe<Scalars['String']>
 	direction: SortDirection
+	limit?: InputMaybe<Scalars['Int']>
 	params: QueryInput
 	project_id: Scalars['ID']
 }
@@ -2641,11 +2665,6 @@ export type QueryLogs_MetricsArgs = {
 	limit_aggregator?: InputMaybe<MetricAggregator>
 	limit_column?: InputMaybe<Scalars['String']>
 	metric_types: Array<MetricAggregator>
-	params: QueryInput
-	project_id: Scalars['ID']
-}
-
-export type QueryLogs_Total_CountArgs = {
 	params: QueryInput
 	project_id: Scalars['ID']
 }
@@ -2793,11 +2812,6 @@ export type QuerySessionArgs = {
 	secure_id: Scalars['String']
 }
 
-export type QuerySessionLogsArgs = {
-	params: QueryInput
-	project_id: Scalars['ID']
-}
-
 export type QuerySession_Comment_Tags_For_ProjectArgs = {
 	project_id: Scalars['ID']
 }
@@ -2886,11 +2900,6 @@ export type QuerySessions_MetricsArgs = {
 	project_id: Scalars['ID']
 }
 
-export type QuerySessions_ReportArgs = {
-	project_id: Scalars['ID']
-	query: ClickhouseQuery
-}
-
 export type QuerySlack_Channel_SuggestionArgs = {
 	project_id: Scalars['ID']
 }
@@ -2920,6 +2929,7 @@ export type QueryTopUsersArgs = {
 export type QueryTraceArgs = {
 	project_id: Scalars['ID']
 	session_secure_id?: InputMaybe<Scalars['String']>
+	timestamp: Scalars['Timestamp']
 	trace_id: Scalars['String']
 }
 
@@ -2928,6 +2938,7 @@ export type QueryTracesArgs = {
 	at?: InputMaybe<Scalars['String']>
 	before?: InputMaybe<Scalars['String']>
 	direction: SortDirection
+	limit?: InputMaybe<Scalars['Int']>
 	params: QueryInput
 	project_id: Scalars['ID']
 }
@@ -3132,6 +3143,27 @@ export enum ReservedErrorsJoinedKey {
 	TraceId = 'trace_id',
 	Type = 'type',
 	VisitedUrl = 'visited_url',
+}
+
+export enum ReservedEventKey {
+	BrowserName = 'browser_name',
+	BrowserVersion = 'browser_version',
+	City = 'city',
+	Country = 'country',
+	Environment = 'environment',
+	Event = 'event',
+	FirstSession = 'first_session',
+	Identified = 'identified',
+	Identifier = 'identifier',
+	Ip = 'ip',
+	OsName = 'os_name',
+	OsVersion = 'os_version',
+	SecureSessionId = 'secure_session_id',
+	ServiceVersion = 'service_version',
+	SessionActiveLength = 'session_active_length',
+	SessionLength = 'session_length',
+	SessionPagesVisited = 'session_pages_visited',
+	State = 'state',
 }
 
 export enum ReservedLogKey {
@@ -3547,7 +3579,9 @@ export type SessionQuery = {
 export type SessionResults = {
 	__typename?: 'SessionResults'
 	sessions: Array<Session>
+	totalActiveLength: Scalars['Int64']
 	totalCount: Scalars['Int64']
+	totalLength: Scalars['Int64']
 }
 
 export type SessionsHistogram = {
@@ -3563,7 +3597,9 @@ export type SessionsReportRow = {
 	avg_active_length_mins: Scalars['Float']
 	avg_length_mins: Scalars['Float']
 	email: Scalars['String']
+	first_session: Scalars['Timestamp']
 	key: Scalars['String']
+	last_session: Scalars['Timestamp']
 	location: Scalars['String']
 	max_active_length_mins: Scalars['Float']
 	max_length_mins: Scalars['Float']
@@ -3671,6 +3707,12 @@ export type SubscriptionDiscount = {
 export enum SubscriptionInterval {
 	Annual = 'Annual',
 	Monthly = 'Monthly',
+}
+
+export enum SuggestionType {
+	Key = 'Key',
+	None = 'None',
+	Value = 'Value',
 }
 
 export type SystemConfiguration = {
@@ -3810,6 +3852,21 @@ export type UserPropertyInput = {
 	value: Scalars['String']
 }
 
+export type Variable = {
+	__typename?: 'Variable'
+	defaultValues: Array<Scalars['String']>
+	field?: Maybe<Scalars['String']>
+	key: Scalars['String']
+	suggestionType: SuggestionType
+}
+
+export type VariableInput = {
+	defaultValues: Array<Scalars['String']>
+	field?: InputMaybe<Scalars['String']>
+	key: Scalars['String']
+	suggestionType: SuggestionType
+}
+
 export type VercelEnv = {
 	__typename?: 'VercelEnv'
 	configurationId: Scalars['String']
@@ -3842,15 +3899,19 @@ export type Visualization = {
 	id: Scalars['ID']
 	name: Scalars['String']
 	projectId: Scalars['ID']
+	timePreset?: Maybe<Scalars['String']>
 	updatedAt: Scalars['Timestamp']
 	updatedByAdmin?: Maybe<SanitizedAdmin>
+	variables: Array<Variable>
 }
 
 export type VisualizationInput = {
 	graphIds?: InputMaybe<Array<Scalars['ID']>>
 	id?: InputMaybe<Scalars['ID']>
-	name: Scalars['String']
+	name?: InputMaybe<Scalars['String']>
 	projectId: Scalars['ID']
+	timePreset?: InputMaybe<Scalars['String']>
+	variables?: InputMaybe<Array<VariableInput>>
 }
 
 export type VisualizationsResponse = {

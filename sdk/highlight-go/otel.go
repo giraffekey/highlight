@@ -137,6 +137,11 @@ func CreateTracerProvider(endpoint string, opts ...sdktrace.TracerProviderOption
 	if err != nil {
 		return nil, fmt.Errorf("creating OTLP trace exporter: %w", err)
 	}
+	conf.resourceAttributes = append(
+		conf.resourceAttributes,
+		semconv.TelemetryDistroName("github.com/highlight/highlight/sdk/highlight-go"),
+		semconv.TelemetryDistroVersion(Version),
+	)
 	resources, err := resource.New(context.Background(),
 		resource.WithFromEnv(),
 		resource.WithHost(),
@@ -197,9 +202,13 @@ func StartTraceWithTracer(ctx context.Context, tracer trace.Tracer, name string,
 	sessionID, requestID, _ := validateRequest(ctx)
 	spanCtx := trace.SpanContextFromContext(ctx)
 	if requestID != "" {
-		data, _ := base64.StdEncoding.DecodeString(requestID)
-		hex := fmt.Sprintf("%032x", data)
-		tid, _ := trace.TraceIDFromHex(hex)
+		// try parse the requestID as hex; fall back to parsing as base64
+		tid, err := trace.TraceIDFromHex(requestID)
+		if err != nil {
+			data, _ := base64.StdEncoding.DecodeString(requestID)
+			hex := fmt.Sprintf("%032x", data)
+			tid, _ = trace.TraceIDFromHex(hex)
+		}
 		spanCtx = spanCtx.WithTraceID(tid)
 	}
 	opts = append(opts, trace.WithTimestamp(t))

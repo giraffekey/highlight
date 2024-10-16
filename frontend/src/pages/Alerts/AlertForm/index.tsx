@@ -2,6 +2,7 @@ import { Button } from '@components/Button'
 import { toast } from '@components/Toaster'
 import {
 	Box,
+	Callout,
 	DateRangePicker,
 	DEFAULT_TIME_PRESETS,
 	Form,
@@ -12,11 +13,9 @@ import {
 } from '@highlight-run/ui/components'
 import { useParams } from '@util/react-router/useParams'
 import { Divider } from 'antd'
-import React, { PropsWithChildren, useEffect, useMemo, useState } from 'react'
+import React, { PropsWithChildren, useMemo, useState } from 'react'
 import { Helmet } from 'react-helmet'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { useDebounce } from 'react-use'
-import { ReferenceArea, ReferenceLine } from 'recharts'
 
 import { SearchContext } from '@/components/Search/SearchContext'
 import { Search } from '@/components/Search/SearchForm/SearchForm'
@@ -27,8 +26,12 @@ import {
 	useUpdateAlertMutation,
 } from '@/graph/generated/hooks'
 import { namedOperations } from '@/graph/generated/operations'
-import { MetricAggregator, ProductType } from '@/graph/generated/schemas'
-import { AlertDestinationInput } from '@/graph/generated/schemas'
+import {
+	AlertDestinationInput,
+	MetricAggregator,
+	ProductType,
+} from '@/graph/generated/schemas'
+import useFeatureFlag, { Feature } from '@/hooks/useFeatureFlag/useFeatureFlag'
 import { useProjectId } from '@/hooks/useProjectId'
 import { useSearchTime } from '@/hooks/useSearchTime'
 import { FREQUENCIES } from '@/pages/Alerts/AlertConfigurationCard/AlertConfigurationConstants'
@@ -38,20 +41,19 @@ import {
 } from '@/pages/Alerts/constants'
 import { DestinationInput } from '@/pages/Alerts/DestinationInput'
 import { Combobox } from '@/pages/Graphing/Combobox'
-import Graph, { getViewConfig } from '@/pages/Graphing/components/Graph'
-import {
-	LINE_DISPLAY,
-	LINE_NULL_HANDLING,
-} from '@/pages/Graphing/components/LineChart'
 import {
 	FUNCTION_TYPES,
-	PRODUCT_ICONS,
-	PRODUCTS,
+	PRODUCT_OPTIONS,
+	PRODUCT_OPTIONS_WITH_EVENTS,
 } from '@/pages/Graphing/constants'
 import { HeaderDivider } from '@/pages/Graphing/Dashboard'
 import { LabeledRow } from '@/pages/Graphing/LabeledRow'
 import { OptionDropdown } from '@/pages/Graphing/OptionDropdown'
+import { EventSelection } from '@/pages/Graphing/EventSelection'
+import { GraphContextProvider } from '@/pages/Graphing/context/GraphContext'
+import { useGraphData } from '@pages/Graphing/hooks/useGraphData'
 
+import { AlertGraph } from '../AlertGraph'
 import * as style from './styles.css'
 
 const SidebarSection = (props: PropsWithChildren) => {
@@ -62,48 +64,44 @@ const SidebarSection = (props: PropsWithChildren) => {
 	)
 }
 
-const EditorBackground = () => {
-	return (
-		<svg width="100%" height="100%">
-			<defs>
-				<pattern
-					id="polka-dots"
-					x="0"
-					y="0"
-					width="14"
-					height="14"
-					patternUnits="userSpaceOnUse"
-				>
-					<circle fill="#e4e2e4" cx="7" cy="7" r="1" />
-				</pattern>
-			</defs>
-
-			<rect
-				x="0"
-				y="0"
-				width="100%"
-				height="100%"
-				fill="url(#polka-dots)"
-			/>
-		</svg>
-	)
-}
-
 const FREQUENCY_OPTIONS = FREQUENCIES.filter((freq) => Number(freq.value) >= 60)
 
 const MINUTE = 60
 const WEEK = 7 * 24 * 60 * MINUTE
 
-const DEFAULT_THRESHOLD = 1
-const DEFAULT_WINDOW = MINUTE * 30
-const DEFAULT_COOLDOWN = MINUTE * 30
+export const SESSION_WINDOW = MINUTE
+export const SESSION_COOLDOWN = WEEK
+
+export const DEFAULT_THRESHOLD = 1
+export const DEFAULT_WINDOW = MINUTE * 30
+export const DEFAULT_COOLDOWN = MINUTE * 30
+
+const ALERT_PRODUCT_INFO = {
+	[ProductType.Sessions]:
+		"Alerts once for every session that matches the condition's filters.",
+	[ProductType.Errors]:
+		'Alerts every time an open error matches the specified conditions.',
+	[ProductType.Logs]: false,
+	[ProductType.Traces]: false,
+	[ProductType.Metrics]: false,
+	[ProductType.Events]: false,
+}
 
 export const AlertForm: React.FC = () => {
 	const { projectId } = useProjectId()
+	const graphContext = useGraphData()
 	const { alert_id } = useParams<{
 		alert_id: string
 	}>()
 	const [searchParams] = useSearchParams()
+
+	const eventSearchEnabled = useFeatureFlag(Feature.EventSearch)
+	const productOptions = useMemo(() => {
+		if (!eventSearchEnabled) {
+			return PRODUCT_OPTIONS
+		}
+		return PRODUCT_OPTIONS_WITH_EVENTS
+	}, [eventSearchEnabled])
 
 	const isEdit = alert_id !== undefined
 
@@ -133,23 +131,18 @@ export const AlertForm: React.FC = () => {
 
 	const [alertName, setAlertName] = useState('')
 	const [productType, setProductType] = useState(
-		(searchParams.get('source') as ProductType) || PRODUCTS[0],
+		(searchParams.get('source') as ProductType) || productOptions[0].value,
 	)
-	const [functionType, setFunctionType] = useState(FUNCTION_TYPES[0])
+	const [functionType, setFunctionType] = useState(MetricAggregator.Count)
 	const [functionColumn, setFunctionColumn] = useState('')
+	const fetchedFunctionColumn = useMemo(() => {
+		return functionType === MetricAggregator.Count ? '' : functionColumn
+	}, [functionColumn, functionType])
 
 	const isErrorAlert = productType === ProductType.Errors
 	const isSessionAlert = productType === ProductType.Sessions
 
 	const [query, setQuery] = useState(searchParams.get('query') ?? '')
-	const [debouncedQuery, setDebouncedQuery] = useState('')
-	useDebounce(
-		() => {
-			setDebouncedQuery(query)
-		},
-		300,
-		[query],
-	)
 
 	const [groupByEnabled, setGroupByEnabled] = useState(false)
 	const [groupByKey, setGroupByKey] = useState('')
@@ -167,45 +160,38 @@ export const AlertForm: React.FC = () => {
 		[],
 	)
 
-	useEffect(() => {
-		if (isErrorAlert) {
+	const handleProductChange = (product: ProductType) => {
+		if (product === productType) {
+			return
+		}
+
+		setProductType(product)
+		if (product === ProductType.Sessions) {
+			// locked session settings -> group by secure_id
+			setGroupByEnabled(true)
+			setGroupByKey('secure_id')
+			// only alert once per session
+			setThresholdWindow(SESSION_WINDOW)
+			setThresholdCooldown(SESSION_COOLDOWN)
+		} else if (product === ProductType.Errors) {
 			// locked error settings -> group by secure_id
 			setGroupByEnabled(true)
 			setGroupByKey('secure_id')
+			setThresholdWindow(DEFAULT_WINDOW)
+			setThresholdCooldown(DEFAULT_COOLDOWN)
 		} else {
 			setGroupByEnabled(false)
 			setGroupByKey('')
-		}
-	}, [isErrorAlert])
-
-	useEffect(() => {
-		if (isSessionAlert) {
-			// locked session settings
-			// group by session_id
-			setGroupByEnabled(true)
-			setGroupByKey('secure_id')
-			// only above threshold
-			setBelowThreshold(false)
-			// alert per session
-			setThresholdValue(DEFAULT_THRESHOLD)
-			// don't alert on sessions more than once
-			setThresholdWindow(MINUTE)
-			setThresholdCooldown(WEEK)
-		} else {
-			setGroupByEnabled(false)
-			setGroupByKey('')
-			setBelowThreshold(false)
-			setThresholdValue(DEFAULT_THRESHOLD)
 			setThresholdWindow(DEFAULT_WINDOW)
 			setThresholdCooldown(DEFAULT_COOLDOWN)
 		}
-	}, [isSessionAlert])
 
-	const viewConfig = getViewConfig(
-		'Line chart',
-		LINE_DISPLAY[0],
-		LINE_NULL_HANDLING[2],
-	)
+		setBelowThreshold(false)
+		setThresholdValue(DEFAULT_THRESHOLD)
+		setQuery('')
+		setFunctionType(MetricAggregator.Count)
+		setFunctionColumn('')
+	}
 
 	const onSave = () => {
 		const formVariables = {
@@ -213,11 +199,8 @@ export const AlertForm: React.FC = () => {
 			name: alertName,
 			product_type: productType,
 			function_type: functionType,
-			function_column:
-				functionType === MetricAggregator.Count
-					? undefined
-					: functionColumn,
-			query: debouncedQuery,
+			function_column: fetchedFunctionColumn || undefined,
+			query: query,
 			group_by_key: groupByEnabled ? groupByKey : undefined,
 			below_threshold: belowThreshold,
 			threshold_value: thresholdValue,
@@ -296,7 +279,6 @@ export const AlertForm: React.FC = () => {
 			setFunctionType(data.alert.function_type)
 			setFunctionColumn(data.alert.function_column ?? '')
 			setQuery(data.alert.query ?? '')
-			setDebouncedQuery(data.alert.query ?? '')
 			setAlertName(data.alert.name)
 			setGroupByEnabled(data.alert.group_by_key !== null)
 			setGroupByKey(data.alert.group_by_key ?? '')
@@ -331,7 +313,7 @@ export const AlertForm: React.FC = () => {
 		createAlertContext.loading || updateAlertContext.loading || !alertName
 
 	return (
-		<>
+		<GraphContextProvider value={graphContext}>
 			<Helmet>
 				<title>{isEdit ? 'Edit' : 'Create'} Alert</title>
 			</Helmet>
@@ -364,7 +346,7 @@ export const AlertForm: React.FC = () => {
 						py="6"
 					>
 						<Text size="small" weight="medium">
-							Create alert
+							{isEdit ? 'Edit' : 'Create'} alert
 						</Text>
 						<Box display="flex" gap="4">
 							<DateRangePicker
@@ -386,7 +368,7 @@ export const AlertForm: React.FC = () => {
 								emphasis="low"
 								kind="secondary"
 								onClick={() => navigate(`/${projectId}/alerts`)}
-								trackingId="CancelAlert"
+								trackingId="AlertCancel"
 							>
 								Cancel
 							</Button>
@@ -396,16 +378,16 @@ export const AlertForm: React.FC = () => {
 									size="small"
 									emphasis="low"
 									onClick={onDelete}
-									trackingId="DeleteAlert"
+									trackingId="AlertDelete"
 								>
-									Delete Alert
+									Delete alert
 								</Button>
 							)}
 
 							<Button
 								disabled={disableSave}
 								onClick={onSave}
-								trackingId="SaveAlert"
+								trackingId="AlertSave"
 							>
 								Save&nbsp;
 							</Button>
@@ -417,72 +399,21 @@ export const AlertForm: React.FC = () => {
 						justifyContent="space-between"
 						cssClass={style.editGraphPanel}
 					>
-						<Box
-							display="flex"
-							position="relative"
-							height="full"
-							cssClass={style.previewWindow}
-						>
-							<Box
-								position="absolute"
-								width="full"
-								height="full"
-								cssClass={style.graphBackground}
-							>
-								<EditorBackground />
-							</Box>
-
-							<Box cssClass={style.graphWrapper} shadow="small">
-								<Box
-									px="16"
-									py="12"
-									width="full"
-									height="full"
-									border="divider"
-									borderRadius="8"
-								>
-									<Graph
-										title={alertName || 'Untitled alert'}
-										viewConfig={viewConfig}
-										productType={productType}
-										projectId={projectId}
-										startDate={startDate}
-										selectedPreset={selectedPreset}
-										endDate={endDate}
-										query={debouncedQuery}
-										metric={functionColumn}
-										functionType={functionType}
-										groupByKey={
-											groupByEnabled
-												? groupByKey
-												: undefined
-										}
-										setTimeRange={updateSearchTime}
-										bucketByKey="Timestamp"
-										bucketByWindow={thresholdWindow}
-									>
-										<ReferenceLine
-											y={thresholdValue}
-											stroke="red"
-										/>
-										{!belowThreshold && (
-											<ReferenceArea
-												y1={thresholdValue}
-												opacity={0.5}
-												isFront
-											/>
-										)}
-										{belowThreshold && (
-											<ReferenceArea
-												y2={thresholdValue}
-												opacity={0.5}
-												isFront
-											/>
-										)}
-									</Graph>
-								</Box>
-							</Box>
-						</Box>
+						<AlertGraph
+							alertName={alertName}
+							query={query}
+							productType={productType}
+							functionColumn={fetchedFunctionColumn}
+							functionType={functionType}
+							groupByKey={groupByEnabled ? groupByKey : undefined}
+							thresholdWindow={thresholdWindow}
+							thresholdValue={thresholdValue}
+							belowThreshold={belowThreshold}
+							startDate={startDate}
+							endDate={endDate}
+							selectedPreset={selectedPreset}
+							updateSearchTime={updateSearchTime}
+						/>
 						<Box
 							display="flex"
 							borderLeft="dividerWeak"
@@ -514,79 +445,136 @@ export const AlertForm: React.FC = () => {
 									<LabeledRow
 										label="Source"
 										name="source"
-										tooltip="The resource being queried, one of the four highlight.io resources."
+										tooltip="The resource being queried, one of the five highlight.io resources."
 									>
-										<OptionDropdown<ProductType>
-											options={PRODUCTS}
+										<OptionDropdown
+											options={productOptions}
 											selection={productType}
-											setSelection={setProductType}
-											icons={PRODUCT_ICONS}
+											setSelection={handleProductChange}
 										/>
 									</LabeledRow>
+									{ALERT_PRODUCT_INFO[productType] && (
+										<Callout
+											title={`${productType} alerts`}
+										>
+											<Box pb="8">
+												<Text>
+													{
+														ALERT_PRODUCT_INFO[
+															productType
+														]
+													}
+												</Text>
+											</Box>
+										</Callout>
+									)}
 								</SidebarSection>
 								<Divider className="m-0" />
 								<SidebarSection>
-									<LabeledRow
-										label="Function"
-										name="function"
-										tooltip="Determines how data points are aggregated. If the function requires a numeric field as input, one can be chosen."
-									>
-										<OptionDropdown<MetricAggregator>
-											options={FUNCTION_TYPES}
-											selection={functionType}
-											setSelection={setFunctionType}
+									{productType === ProductType.Events ? (
+										<EventSelection
+											initialQuery={query}
+											setQuery={setQuery}
+											startDate={startDate}
+											endDate={endDate}
 										/>
-										{functionType !==
-											MetricAggregator.Count && (
-											<Combobox
-												selection={functionColumn}
-												setSelection={setFunctionColumn}
-												label="metric"
-												searchConfig={
-													searchOptionsConfig
-												}
-												onlyNumericKeys={
-													functionType !==
-													MetricAggregator.CountDistinct
-												}
-											/>
-										)}
-									</LabeledRow>
-									<LabeledRow
-										label="Filters"
-										name="query"
-										tooltip="The search query used to filter which data points are included before aggregating."
-									>
-										<Box
-											border="divider"
-											width="full"
-											borderRadius="6"
+									) : (
+										<LabeledRow
+											label="Filters"
+											name="query"
+											tooltip="The search query used to filter which data points are included before aggregating."
 										>
-											<SearchContext
-												initialQuery={query}
-												onSubmit={setQuery}
+											<Box
+												border="divider"
+												width="full"
+												borderRadius="6"
 											>
-												<Search
-													startDate={
-														new Date(startDate)
-													}
-													endDate={new Date(endDate)}
-													productType={productType}
-													hideIcon
-												/>
-											</SearchContext>
-										</Box>
-									</LabeledRow>
+												<SearchContext
+													initialQuery={query}
+													onSubmit={setQuery}
+												>
+													<Search
+														startDate={
+															new Date(startDate)
+														}
+														endDate={
+															new Date(endDate)
+														}
+														productType={
+															productType
+														}
+														hideIcon
+													/>
+												</SearchContext>
+											</Box>
+										</LabeledRow>
+									)}
 								</SidebarSection>
-								<Divider className="m-0" />
+								{!isSessionAlert && !isErrorAlert && (
+									<>
+										<Box px="12">
+											<Divider className="m-0" />
+										</Box>
+										<SidebarSection>
+											<LabeledRow
+												label="Function"
+												name="function"
+												tooltip="Determines how data points are aggregated. If the function requires a numeric field as input, one can be chosen."
+											>
+												<OptionDropdown
+													options={FUNCTION_TYPES}
+													selection={functionType}
+													setSelection={
+														setFunctionType
+													}
+												/>
+												<Combobox
+													selection={
+														fetchedFunctionColumn
+													}
+													setSelection={
+														setFunctionColumn
+													}
+													searchConfig={
+														searchOptionsConfig
+													}
+													disabled={
+														functionType ===
+														MetricAggregator.Count
+													}
+													onlyNumericKeys={
+														functionType !==
+														MetricAggregator.CountDistinct
+													}
+												/>
+											</LabeledRow>
+											<LabeledRow
+												label="Group by"
+												name="groupBy"
+												enabled={groupByEnabled}
+												setEnabled={setGroupByEnabled}
+												tooltip="A categorical field for grouping results into separate series."
+											>
+												<Combobox
+													selection={groupByKey}
+													setSelection={setGroupByKey}
+													searchConfig={
+														searchOptionsConfig
+													}
+												/>
+											</LabeledRow>
+										</SidebarSection>
+									</>
+								)}
 								{!isSessionAlert && (
 									<>
+										<Divider className="m-0" />
 										<SidebarSection>
 											<LabeledRow
 												label="Alert conditions"
 												name="alertConditions"
 											>
-												<OptionDropdown<AlertCondition>
+												<OptionDropdown
 													options={
 														ALERT_CONDITION_OPTIONS
 													}
@@ -626,13 +614,10 @@ export const AlertForm: React.FC = () => {
 													label="Alert window"
 													name="thresholdWindow"
 												>
-													<OptionDropdown<string>
-														options={FREQUENCY_OPTIONS.map(
-															(f) => f.value,
-														)}
-														labels={FREQUENCY_OPTIONS.map(
-															(f) => f.name,
-														)}
+													<OptionDropdown
+														options={
+															FREQUENCY_OPTIONS
+														}
 														selection={String(
 															thresholdWindow,
 														)}
@@ -650,13 +635,8 @@ export const AlertForm: React.FC = () => {
 												label="Cooldown"
 												name="thresholdCooldown"
 											>
-												<OptionDropdown<string>
-													options={FREQUENCY_OPTIONS.map(
-														(f) => f.value,
-													)}
-													labels={FREQUENCY_OPTIONS.map(
-														(f) => f.name,
-													)}
+												<OptionDropdown
+													options={FREQUENCY_OPTIONS}
 													selection={String(
 														thresholdCooldown,
 													)}
@@ -668,38 +648,9 @@ export const AlertForm: React.FC = () => {
 												/>
 											</LabeledRow>
 										</SidebarSection>
-										<Divider className="m-0" />
-										{!isErrorAlert && (
-											<>
-												<SidebarSection>
-													<LabeledRow
-														label="Group by"
-														name="groupBy"
-														enabled={groupByEnabled}
-														setEnabled={
-															setGroupByEnabled
-														}
-														tooltip="A categorical field for grouping results into separate series."
-													>
-														<Combobox
-															selection={
-																groupByKey
-															}
-															setSelection={
-																setGroupByKey
-															}
-															label="groupBy"
-															searchConfig={
-																searchOptionsConfig
-															}
-														/>
-													</LabeledRow>
-												</SidebarSection>
-												<Divider className="m-0" />
-											</>
-										)}
 									</>
 								)}
+								<Divider className="m-0" />
 								<SidebarSection>
 									<DestinationInput
 										initialDestinations={
@@ -713,6 +664,6 @@ export const AlertForm: React.FC = () => {
 					</Box>
 				</Box>
 			</Box>
-		</>
+		</GraphContextProvider>
 	)
 }

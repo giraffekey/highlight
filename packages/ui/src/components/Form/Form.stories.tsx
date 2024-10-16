@@ -24,7 +24,7 @@ export const Basic = () => {
 		},
 	})
 	const values = formStore.useState('values')
-	const [priority, setPriority] = useState<typeof PRIORITIES[0]>()
+	const [priority, setPriority] = useState<(typeof PRIORITIES)[0]>()
 
 	useEffect(() => {
 		setTimeout(() => {
@@ -60,7 +60,7 @@ export const Basic = () => {
 						step="5"
 						defaultValue="10"
 						min={0}
-						max={50}
+						max={500}
 					/>
 				</Box>
 			</Form>

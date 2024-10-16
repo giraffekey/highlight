@@ -20,10 +20,9 @@ import (
 )
 
 const TracesTable = "traces"
-const TracesSamplingTable = "traces_sampling"
+const TracesSamplingTable = "traces_sampling_new"
 const TraceKeysTable = "trace_keys"
 const TraceKeyValuesTable = "trace_key_values"
-const TracesByIdTable = "traces_by_id"
 
 var traceKeysToColumns = map[string]string{
 	string(modelInputs.ReservedTraceKeySecureSessionID): "SecureSessionId",
@@ -395,7 +394,7 @@ func extractEvents(result ClickhouseTraceRow) []*modelInputs.TraceEvent {
 	})
 }
 
-func (client *Client) ReadTrace(ctx context.Context, projectID int, traceID string) ([]*modelInputs.Trace, error) {
+func (client *Client) ReadTrace(ctx context.Context, projectID int, traceID string, timestamp time.Time) ([]*modelInputs.Trace, error) {
 	span, ctx := util.StartSpanFromContext(ctx, "clickhouse.ReadTrace", util.Tag("projectID", projectID), util.Tag("traceID", traceID))
 	defer span.Finish()
 
@@ -403,10 +402,13 @@ func (client *Client) ReadTrace(ctx context.Context, projectID int, traceID stri
 	var err error
 	var args []interface{}
 
-	sb.From(TracesByIdTable).
+	sb.From(TracesSamplingTable).
 		Select(selectTraceColumns).
 		Where(sb.Equal("ProjectId", projectID)).
-		Where(sb.Equal("TraceId", traceID))
+		Where(sb.Equal("TraceId", traceID)).
+		Where(fmt.Sprintf("farmHash64(TraceId) = farmHash64(%s)", sb.Var(traceID))).
+		Where(sb.GreaterEqualThan("Timestamp", timestamp.Add(-1*time.Hour))).
+		Where(sb.LessEqualThan("Timestamp", timestamp.Add(time.Hour)))
 
 	sql, args := sb.BuildWithFlavor(sqlbuilder.ClickHouse)
 
@@ -482,7 +484,7 @@ func (client *Client) ReadWorkspaceTraceCounts(ctx context.Context, projectIDs [
 }
 
 func (client *Client) TracesKeys(ctx context.Context, projectID int, startDate time.Time, endDate time.Time, query *string, typeArg *modelInputs.KeyType) ([]*modelInputs.QueryKey, error) {
-	traceKeys, err := KeysAggregated(ctx, client, TraceKeysTable, projectID, startDate, endDate, query, typeArg)
+	traceKeys, err := KeysAggregated(ctx, client, TraceKeysTable, projectID, startDate, endDate, query, typeArg, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -502,7 +504,7 @@ func (client *Client) TracesKeys(ctx context.Context, projectID int, startDate t
 }
 
 func (client *Client) TracesKeyValues(ctx context.Context, projectID int, keyName string, startDate time.Time, endDate time.Time, query *string, limit *int) ([]string, error) {
-	return KeyValuesAggregated(ctx, client, TraceKeyValuesTable, projectID, keyName, startDate, endDate, query, limit)
+	return KeyValuesAggregated(ctx, client, TraceKeyValuesTable, projectID, keyName, startDate, endDate, query, limit, nil)
 }
 
 func TraceMatchesQuery(trace *TraceRow, filters listener.Filters) bool {

@@ -56,7 +56,6 @@ import {
 import { ProductType, SavedSegmentEntityType } from '@/graph/generated/schemas'
 import { useDebounce } from '@/hooks/useDebounce'
 import { useApplicationContext } from '@/routers/AppRouter/context/ApplicationContext'
-import { formatNumber } from '@/util/numbers'
 
 import { AiSearch } from './AiSearch'
 import * as styles from './SearchForm.css'
@@ -85,7 +84,7 @@ export const SEARCH_OPERATORS = [
 	...CONTAINS_OPERATOR,
 	...MATCHES_OPERATOR,
 ] as const
-export type SearchOperator = typeof SEARCH_OPERATORS[number]
+export type SearchOperator = (typeof SEARCH_OPERATORS)[number]
 
 type Creatable = {
 	label: string
@@ -115,7 +114,7 @@ export type SearchFormProps = {
 	savedSegmentType?: SavedSegmentEntityType
 	textAreaRef?: React.RefObject<HTMLTextAreaElement>
 	isPanelView?: boolean
-	resultCount?: number
+	resultFormatted?: string
 	loading?: boolean
 	creatables?: { [key: string]: Creatable }
 	enableAIMode?: boolean
@@ -137,7 +136,7 @@ const SearchForm: React.FC<SearchFormProps> = ({
 	savedSegmentType,
 	textAreaRef,
 	isPanelView,
-	resultCount,
+	resultFormatted,
 	loading,
 	creatables,
 	enableAIMode,
@@ -263,14 +262,11 @@ const SearchForm: React.FC<SearchFormProps> = ({
 									<Box display="flex" alignItems="center">
 										{loading ? (
 											<LoadingBox />
-										) : (
-											resultCount != null && (
-												<Text color="weak">
-													{formatNumber(resultCount)}{' '}
-													results
-												</Text>
-											)
-										)}
+										) : resultFormatted ? (
+											<Text color="weak">
+												{resultFormatted}
+											</Text>
+										) : null}
 									</Box>
 									{SegmentMenu}
 								</Stack>
@@ -335,8 +331,10 @@ export const Search: React.FC<{
 	textAreaRef?: React.RefObject<HTMLTextAreaElement>
 	hasAdditonalActions?: boolean
 	creatables?: { [key: string]: Creatable }
+	defaultValueOptions?: string[]
 	enableAIMode?: boolean
 	aiSupportedSearch?: boolean
+	event?: string
 }> = ({
 	startDate,
 	endDate,
@@ -346,8 +344,10 @@ export const Search: React.FC<{
 	productType,
 	hasAdditonalActions,
 	creatables,
+	defaultValueOptions,
 	enableAIMode,
 	aiSupportedSearch,
+	event,
 }) => {
 	const {
 		disabled,
@@ -410,7 +410,10 @@ export const Search: React.FC<{
 		!!activePart.value?.length
 
 	let visibleItems: SearchResult[] = showValues
-		? getVisibleValues(activePart, values)
+		? getVisibleValues(
+				activePart,
+				(defaultValueOptions ?? []).concat(values ?? []),
+			)
 		: getVisibleKeys(query, activePart, keys)
 
 	// Show operators when we have an exact match for a key
@@ -447,7 +450,7 @@ export const Search: React.FC<{
 				({
 					name: operator,
 					type: 'Operator',
-				} as SearchResult),
+				}) as SearchResult,
 		)
 	}
 
@@ -481,6 +484,7 @@ export const Search: React.FC<{
 					end_date: moment(endDate).format(TIME_FORMAT),
 				},
 				query: debouncedValue,
+				event: event,
 			},
 			fetchPolicy: 'cache-first',
 			onCompleted: (data) => {
@@ -495,6 +499,7 @@ export const Search: React.FC<{
 		project_id,
 		getKeys,
 		productType,
+		event,
 	])
 
 	useEffect(() => {
@@ -527,6 +532,7 @@ export const Search: React.FC<{
 				},
 				query: debouncedValue,
 				count: 25,
+				event: event,
 			},
 			fetchPolicy: 'cache-first',
 			onCompleted: (data) => {
@@ -543,6 +549,7 @@ export const Search: React.FC<{
 		project_id,
 		showValues,
 		startDate,
+		event,
 	])
 
 	useEffect(() => {
@@ -728,6 +735,7 @@ export const Search: React.FC<{
 						[styles.comboboxNotEmpty]: query.length > 0,
 					})}
 					render={
+						// @ts-ignore onPointerEnterCapture, onPointerLeaveCapture ignored by autoresize lib
 						<TextareaAutosize
 							ref={inputRef}
 							style={{ resize: 'none', overflowY: 'hidden' }}
@@ -821,7 +829,7 @@ export const Search: React.FC<{
 											? setAiMode(true)
 											: navigate(
 													`/w/${workspaceId}/harold-ai`,
-											  )
+												)
 									}
 									store={comboboxStore}
 								>
@@ -879,7 +887,7 @@ export const Search: React.FC<{
 								</Combobox.Item>
 							</Combobox.Group>
 						)}
-						{loading && visibleItems.length === 0 && (
+						{loading && (
 							<Combobox.Group
 								className={styles.comboboxGroup}
 								store={comboboxStore}

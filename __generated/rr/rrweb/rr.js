@@ -1,17 +1,11 @@
 // ../rrweb/packages/rrweb/dist/rrweb.js
 var __defProp = Object.defineProperty;
 var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
-var __publicField = (obj, key, value) => {
-  __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
-  return value;
-};
+var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
 var _a;
 var __defProp$1 = Object.defineProperty;
 var __defNormalProp$1 = (obj, key, value) => key in obj ? __defProp$1(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
-var __publicField$1 = (obj, key, value) => {
-  __defNormalProp$1(obj, typeof key !== "symbol" ? key + "" : key, value);
-  return value;
-};
+var __publicField$1 = (obj, key, value) => __defNormalProp$1(obj, typeof key !== "symbol" ? key + "" : key, value);
 var NodeType$2 = /* @__PURE__ */ ((NodeType2) => {
   NodeType2[NodeType2["Document"] = 0] = "Document";
   NodeType2[NodeType2["DocumentType"] = 1] = "DocumentType";
@@ -215,9 +209,13 @@ function stringifyStylesheet(s2) {
     if (!rules2) {
       return null;
     }
+    let sheetHref = s2.href;
+    if (!sheetHref && s2.ownerNode && s2.ownerNode.ownerDocument) {
+      sheetHref = s2.ownerNode.ownerDocument.location.href;
+    }
     const stringifiedRules = Array.from(
       rules2,
-      (rule2) => stringifyRule(rule2, s2.href)
+      (rule2) => stringifyRule(rule2, sheetHref)
     ).join("");
     return fixBrowserCompatibilityIssuesInCSS(stringifiedRules);
   } catch (error) {
@@ -452,9 +450,43 @@ function absolutifyURLs(cssText, href) {
     }
   );
 }
+function normalizeCssString(cssText) {
+  return cssText.replace(/(\/\*[^*]*\*\/)|[\s;]/g, "");
+}
+function splitCssText(cssText, style) {
+  const childNodes2 = Array.from(style.childNodes);
+  const splits = [];
+  if (childNodes2.length > 1 && cssText && typeof cssText === "string") {
+    const cssTextNorm = normalizeCssString(cssText);
+    for (let i2 = 1; i2 < childNodes2.length; i2++) {
+      if (childNodes2[i2].textContent && typeof childNodes2[i2].textContent === "string") {
+        const textContentNorm = normalizeCssString(childNodes2[i2].textContent);
+        for (let j = 3; j < textContentNorm.length; j++) {
+          const bit = textContentNorm.substring(0, j);
+          if (cssTextNorm.split(bit).length === 2) {
+            const splitNorm = cssTextNorm.indexOf(bit);
+            for (let k = splitNorm; k < cssText.length; k++) {
+              if (normalizeCssString(cssText.substring(0, k)).length === splitNorm) {
+                splits.push(cssText.substring(0, k));
+                cssText = cssText.substring(k);
+                break;
+              }
+            }
+            break;
+          }
+        }
+      }
+    }
+  }
+  splits.push(cssText);
+  return splits;
+}
+function markCssSplits(cssText, style) {
+  return splitCssText(cssText, style).join("/* rr_split */");
+}
 function obfuscateText(text) {
   text = text.replace(/[^ -~]+/g, "");
-  text = (text == null ? void 0 : text.split(" ").map((word) => Math.random().toString(20).substr(2, word.length)).join(" ")) || "";
+  text = (text == null ? void 0 : text.split(" ").map((word) => Math.random().toString(20).substring(2, word.length)).join(" ")) || "";
   return text;
 }
 function isElementSrcBlocked(tagName) {
@@ -765,6 +797,7 @@ function serializeNode(n2, options) {
     recordCanvas,
     keepIframeSrcFn,
     newlyAddedElement = false,
+    cssCaptured = false,
     privacySetting
   } = options;
   const rootId = getRootId(doc, mirror2);
@@ -814,7 +847,8 @@ function serializeNode(n2, options) {
         needsMask,
         maskTextFn,
         privacySetting,
-        rootId
+        rootId,
+        cssCaptured
       });
     case n2.CDATA_SECTION_NODE:
       return {
@@ -839,48 +873,28 @@ function getRootId(doc, mirror2) {
   return docId === 1 ? void 0 : docId;
 }
 function serializeTextNode(n2, options) {
-  var _a2, _b;
-  const {
-    needsMask,
-    maskTextFn,
-    privacySetting,
-    rootId
-  } = options;
+  var _a2;
+  const { needsMask, maskTextFn, privacySetting, rootId, cssCaptured } = options;
   const parent = index$1.parentNode(n2);
   const parentTagName = parent && parent.tagName;
-  let text = index$1.textContent(n2);
+  let textContent2 = "";
   const isStyle = parentTagName === "STYLE" ? true : void 0;
   const isScript = parentTagName === "SCRIPT" ? true : void 0;
-  let textContentHandled = false;
-  if (isStyle && text) {
-    try {
-      if (n2.nextSibling || n2.previousSibling) {
-      } else if ((_a2 = parent.sheet) == null ? void 0 : _a2.cssRules) {
-        text = stringifyStylesheet(parent.sheet);
-      }
-    } catch (err) {
-      console.warn(
-        `Cannot get CSS styles from text's parentNode. Error: ${err}`,
-        n2
-      );
-    }
-    text = absolutifyURLs(text, getHref(options.doc));
-    textContentHandled = true;
-  }
   if (isScript) {
-    text = "SCRIPT_PLACEHOLDER";
-    textContentHandled = true;
-  } else if (parentTagName === "NOSCRIPT") {
-    text = "";
-    textContentHandled = true;
+    textContent2 = "SCRIPT_PLACEHOLDER";
+  } else if (!cssCaptured) {
+    textContent2 = index$1.textContent(n2);
+    if (isStyle && textContent2) {
+      textContent2 = absolutifyURLs(textContent2, getHref(options.doc));
+    }
   }
-  if (!isStyle && !isScript && text && needsMask) {
-    text = maskTextFn ? maskTextFn(text, index$1.parentElement(n2)) : text.replace(/[\S]/g, "*");
+  if (!isStyle && !isScript && textContent2 && needsMask) {
+    textContent2 = maskTextFn ? maskTextFn(textContent2, index$1.parentElement(n2)) : textContent2.replace(/[\S]/g, "*");
   }
   const enableStrictPrivacy = privacySetting === "strict";
-  const highlightOverwriteRecord = (_b = n2.parentElement) == null ? void 0 : _b.getAttribute("data-hl-record");
-  const obfuscateDefaultPrivacy = privacySetting === "default" && shouldObfuscateTextByDefault(text);
-  if ((enableStrictPrivacy || obfuscateDefaultPrivacy) && !highlightOverwriteRecord && !textContentHandled && parentTagName) {
+  const highlightOverwriteRecord = (_a2 = n2.parentElement) == null ? void 0 : _a2.getAttribute("data-hl-record");
+  const obfuscateDefaultPrivacy = privacySetting === "default" && shouldObfuscateTextByDefault(textContent2);
+  if ((enableStrictPrivacy || obfuscateDefaultPrivacy) && !highlightOverwriteRecord && parentTagName) {
     const IGNORE_TAG_NAMES = /* @__PURE__ */ new Set([
       "HEAD",
       "TITLE",
@@ -890,14 +904,13 @@ function serializeTextNode(n2, options) {
       "BODY",
       "NOSCRIPT"
     ]);
-    if (!IGNORE_TAG_NAMES.has(parentTagName) && text) {
-      text = obfuscateText(text);
+    if (!IGNORE_TAG_NAMES.has(parentTagName) && textContent2) {
+      textContent2 = obfuscateText(textContent2);
     }
   }
   return {
     type: NodeType$2.Text,
-    textContent: text || "",
-    isStyle,
+    textContent: textContent2 || "",
     rootId
   };
 }
@@ -949,12 +962,14 @@ function serializeElementNode(n2, options) {
       attributes._cssText = cssText;
     }
   }
-  if (tagName === "style" && n2.sheet && // TODO: Currently we only try to get dynamic stylesheet when it is an empty style element
-  !(n2.innerText || index$1.textContent(n2) || "").trim().length) {
-    const cssText = stringifyStylesheet(
+  if (tagName === "style" && n2.sheet) {
+    let cssText = stringifyStylesheet(
       n2.sheet
     );
     if (cssText) {
+      if (n2.childNodes.length > 1) {
+        cssText = markCssSplits(cssText, n2);
+      }
       attributes._cssText = cssText;
     }
   }
@@ -987,12 +1002,8 @@ function serializeElementNode(n2, options) {
   }
   if (tagName === "canvas" && recordCanvas) {
     if (n2.__context === "2d") {
-      if (!is2DCanvasBlank(n2)) {
-        attributes.rr_dataURL = n2.toDataURL(
-          dataURLOptions.type,
-          dataURLOptions.quality
-        );
-      }
+      if (!is2DCanvasBlank(n2))
+        ;
     } else if (!("__context" in n2)) {
       const canvasDataURL = n2.toDataURL(
         dataURLOptions.type,
@@ -1100,7 +1111,9 @@ function serializeElementNode(n2, options) {
         height,
         rr_width: `${width}px`,
         rr_height: `${height}px`,
-        rr_inlined_video: true
+        rr_inlined_video: true,
+        class: attributes.class,
+        style: attributes.style
       };
       tagName = "canvas";
       const blankCanvas = doc.createElement("canvas");
@@ -1187,6 +1200,7 @@ function serializeNodeWithId(n2, options) {
     stylesheetLoadTimeout = 5e3,
     keepIframeSrcFn = () => false,
     newlyAddedElement = false,
+    cssCaptured = false,
     privacySetting
   } = options;
   let { needsMask } = options;
@@ -1216,6 +1230,7 @@ function serializeNodeWithId(n2, options) {
     recordCanvas,
     keepIframeSrcFn,
     newlyAddedElement,
+    cssCaptured,
     privacySetting
   });
   if (!_serializedNode) {
@@ -1225,7 +1240,7 @@ function serializeNodeWithId(n2, options) {
   let id;
   if (mirror2.hasNode(n2)) {
     id = mirror2.getId(n2);
-  } else if (slimDOMExcluded(_serializedNode, slimDOMOptions) || !preserveWhiteSpace && _serializedNode.type === NodeType$2.Text && !_serializedNode.isStyle && !_serializedNode.textContent.replace(/^\s+|\s+$/gm, "").length) {
+  } else if (slimDOMExcluded(_serializedNode, slimDOMOptions) || !preserveWhiteSpace && _serializedNode.type === NodeType$2.Text && !_serializedNode.textContent.replace(/^\s+|\s+$/gm, "").length) {
     id = IGNORED_NODE;
   } else {
     id = genId();
@@ -1284,11 +1299,15 @@ function serializeNodeWithId(n2, options) {
       onStylesheetLoad,
       stylesheetLoadTimeout,
       keepIframeSrcFn,
+      cssCaptured: false,
       privacySetting: overwrittenPrivacySetting
     };
     if (serializedNode.type === NodeType$2.Element && serializedNode.tagName === "textarea" && serializedNode.attributes.value !== void 0)
       ;
     else {
+      if (serializedNode.type === NodeType$2.Element && serializedNode.attributes._cssText !== void 0 && typeof serializedNode.attributes._cssText === "string") {
+        bypassOptions.cssCaptured = true;
+      }
       for (const childN of Array.from(index$1.childNodes(n2))) {
         const serializedChildNode = serializeNodeWithId(childN, bypassOptions);
         if (serializedChildNode) {
@@ -1511,41 +1530,8 @@ var pseudoClassPlugin = {
         }
         fixed.push(rule2);
         rule2.selectors.forEach(function(selector) {
-          if (!selector.includes(":")) {
-            return;
-          }
-          const selectorParts = selector.replace(/\n/g, " ").split(" ");
-          const pseudoedSelectorParts = [];
-          selectorParts.forEach(function(selectorPart) {
-            const pseudos = selectorPart.match(/::?([^:]+)/g);
-            if (!pseudos) {
-              pseudoedSelectorParts.push(selectorPart);
-              return;
-            }
-            const baseSelector = selectorPart.substr(
-              0,
-              selectorPart.length - pseudos.join("").length
-            );
-            const classPseudos = pseudos.map(function(pseudo) {
-              const pseudoToCheck = pseudo.replace(/\(.*/g, "");
-              if (pseudoToCheck !== ":hover") {
-                return pseudo;
-              }
-              if (pseudo.match(/^::/)) {
-                return pseudo;
-              }
-              pseudo = pseudo.substr(1);
-              pseudo = pseudo.replace(/\(/g, "\\(");
-              pseudo = pseudo.replace(/\)/g, "\\)");
-              return ".\\:" + pseudo;
-            });
-            pseudoedSelectorParts.push(baseSelector + classPseudos.join(""));
-          });
-          addSelector(pseudoedSelectorParts.join(" "));
-          function addSelector(newSelector) {
-            if (newSelector && newSelector !== selector) {
-              rule2.selector += ",\n" + newSelector;
-            }
+          if (selector.includes(":hover")) {
+            rule2.selector += ",\n" + selector.replace(/:hover/g, ".\\:hover");
           }
         });
       }
@@ -1584,7 +1570,7 @@ function getAugmentedNamespace$1(n2) {
 var picocolors_browser$1 = { exports: {} };
 var x$1 = String;
 var create$1 = function() {
-  return { isColorSupported: false, reset: x$1, bold: x$1, dim: x$1, italic: x$1, underline: x$1, inverse: x$1, hidden: x$1, strikethrough: x$1, black: x$1, red: x$1, green: x$1, yellow: x$1, blue: x$1, magenta: x$1, cyan: x$1, white: x$1, gray: x$1, bgBlack: x$1, bgRed: x$1, bgGreen: x$1, bgYellow: x$1, bgBlue: x$1, bgMagenta: x$1, bgCyan: x$1, bgWhite: x$1 };
+  return { isColorSupported: false, reset: x$1, bold: x$1, dim: x$1, italic: x$1, underline: x$1, inverse: x$1, hidden: x$1, strikethrough: x$1, black: x$1, red: x$1, green: x$1, yellow: x$1, blue: x$1, magenta: x$1, cyan: x$1, white: x$1, gray: x$1, bgBlack: x$1, bgRed: x$1, bgGreen: x$1, bgYellow: x$1, bgBlue: x$1, bgMagenta: x$1, bgCyan: x$1, bgWhite: x$1, blackBright: x$1, redBright: x$1, greenBright: x$1, yellowBright: x$1, blueBright: x$1, magentaBright: x$1, cyanBright: x$1, whiteBright: x$1, bgBlackBright: x$1, bgRedBright: x$1, bgGreenBright: x$1, bgYellowBright: x$1, bgBlueBright: x$1, bgMagentaBright: x$1, bgCyanBright: x$1, bgWhiteBright: x$1 };
 };
 picocolors_browser$1.exports = create$1();
 picocolors_browser$1.exports.createColors = create$1;
@@ -1641,30 +1627,40 @@ var CssSyntaxError$3$1 = class CssSyntaxError extends Error {
     let css = this.source;
     if (color == null)
       color = pico$1.isColorSupported;
-    if (terminalHighlight$1$1) {
-      if (color)
-        css = terminalHighlight$1$1(css);
+    let aside = (text) => text;
+    let mark = (text) => text;
+    let highlight = (text) => text;
+    if (color) {
+      let { bold, gray, red } = pico$1.createColors(true);
+      mark = (text) => bold(red(text));
+      aside = (text) => gray(text);
+      if (terminalHighlight$1$1) {
+        highlight = (text) => terminalHighlight$1$1(text);
+      }
     }
     let lines = css.split(/\r?\n/);
     let start = Math.max(this.line - 3, 0);
     let end = Math.min(this.line + 2, lines.length);
     let maxWidth = String(end).length;
-    let mark, aside;
-    if (color) {
-      let { bold, gray, red } = pico$1.createColors(true);
-      mark = (text) => bold(red(text));
-      aside = (text) => gray(text);
-    } else {
-      mark = aside = (str) => str;
-    }
     return lines.slice(start, end).map((line, index2) => {
       let number = start + 1 + index2;
       let gutter = " " + (" " + number).slice(-maxWidth) + " | ";
       if (number === this.line) {
+        if (line.length > 160) {
+          let padding = 20;
+          let subLineStart = Math.max(0, this.column - padding);
+          let subLineEnd = Math.max(
+            this.column + padding,
+            this.endColumn + padding
+          );
+          let subLine = line.slice(subLineStart, subLineEnd);
+          let spacing2 = aside(gutter.replace(/\d/g, " ")) + line.slice(0, Math.min(this.column - 1, padding - 1)).replace(/[^\t]/g, " ");
+          return mark(">") + aside(gutter) + highlight(subLine) + "\n " + spacing2 + mark("^");
+        }
         let spacing = aside(gutter.replace(/\d/g, " ")) + line.slice(0, this.column - 1).replace(/[^\t]/g, " ");
-        return mark(">") + aside(gutter) + line + "\n " + spacing + mark("^");
+        return mark(">") + aside(gutter) + highlight(line) + "\n " + spacing + mark("^");
       }
-      return " " + aside(gutter) + line;
+      return " " + aside(gutter) + highlight(line);
     }).join("\n");
   }
   toString() {
@@ -1677,9 +1673,6 @@ var CssSyntaxError$3$1 = class CssSyntaxError extends Error {
 };
 var cssSyntaxError$1 = CssSyntaxError$3$1;
 CssSyntaxError$3$1.default = CssSyntaxError$3$1;
-var symbols$1 = {};
-symbols$1.isClean = Symbol("isClean");
-symbols$1.my = Symbol("my");
 var DEFAULT_RAW$1 = {
   after: "\n",
   beforeClose: "\n",
@@ -2002,10 +1995,13 @@ function stringify$4$1(node2, builder) {
 }
 var stringify_1$1 = stringify$4$1;
 stringify$4$1.default = stringify$4$1;
-var { isClean: isClean$2$1, my: my$2$1 } = symbols$1;
+var symbols$1 = {};
+symbols$1.isClean = Symbol("isClean");
+symbols$1.my = Symbol("my");
 var CssSyntaxError$2$1 = cssSyntaxError$1;
 var Stringifier2$1 = stringifier$1;
 var stringify$3$1 = stringify_1$1;
+var { isClean: isClean$2$1, my: my$2$1 } = symbols$1;
 function cloneNode$1(obj, parent) {
   let cloned = new obj.constructor();
   for (let i2 in obj) {
@@ -2134,6 +2130,10 @@ var Node$4$1 = class Node2 {
       }
     };
   }
+  /* c8 ignore next 3 */
+  markClean() {
+    this[isClean$2$1] = true;
+  }
   markDirty() {
     if (this[isClean$2$1]) {
       this[isClean$2$1] = false;
@@ -2198,7 +2198,10 @@ var Node$4$1 = class Node2 {
       let index2 = stringRepresentation.indexOf(opts.word);
       if (index2 !== -1) {
         start = this.positionInside(index2, stringRepresentation);
-        end = this.positionInside(index2 + opts.word.length, stringRepresentation);
+        end = this.positionInside(
+          index2 + opts.word.length,
+          stringRepresentation
+        );
       }
     } else {
       if (opts.start) {
@@ -2334,7 +2337,16 @@ var Node$4$1 = class Node2 {
 var node$1 = Node$4$1;
 Node$4$1.default = Node$4$1;
 var Node$3$1 = node$1;
-var Declaration$4$1 = class Declaration extends Node$3$1 {
+var Comment$4$1 = class Comment extends Node$3$1 {
+  constructor(defaults) {
+    super(defaults);
+    this.type = "comment";
+  }
+};
+var comment$1 = Comment$4$1;
+Comment$4$1.default = Comment$4$1;
+var Node$2$1 = node$1;
+var Declaration$4$1 = class Declaration extends Node$2$1 {
   constructor(defaults) {
     if (defaults && typeof defaults.value !== "undefined" && typeof defaults.value !== "string") {
       defaults = { ...defaults, value: String(defaults.value) };
@@ -2348,691 +2360,14 @@ var Declaration$4$1 = class Declaration extends Node$3$1 {
 };
 var declaration$1 = Declaration$4$1;
 Declaration$4$1.default = Declaration$4$1;
-var urlAlphabet$1 = "useandom-26T198340PX75pxJACKVERYMINDBUSHWOLF_GQZbfghjklqvwyzrict";
-var customAlphabet$1 = (alphabet, defaultSize = 21) => {
-  return (size = defaultSize) => {
-    let id = "";
-    let i2 = size;
-    while (i2--) {
-      id += alphabet[Math.random() * alphabet.length | 0];
-    }
-    return id;
-  };
-};
-var nanoid$1$1 = (size = 21) => {
-  let id = "";
-  let i2 = size;
-  while (i2--) {
-    id += urlAlphabet$1[Math.random() * 64 | 0];
-  }
-  return id;
-};
-var nonSecure$1 = { nanoid: nanoid$1$1, customAlphabet: customAlphabet$1 };
-var { SourceMapConsumer: SourceMapConsumer$2$1, SourceMapGenerator: SourceMapGenerator$2$1 } = require$$2$1;
-var { existsSync: existsSync$1, readFileSync: readFileSync$1 } = require$$2$1;
-var { dirname: dirname$1$1, join: join$1 } = require$$2$1;
-function fromBase64$1(str) {
-  if (Buffer) {
-    return Buffer.from(str, "base64").toString();
-  } else {
-    return window.atob(str);
-  }
-}
-var PreviousMap$2$1 = class PreviousMap {
-  constructor(css, opts) {
-    if (opts.map === false)
-      return;
-    this.loadAnnotation(css);
-    this.inline = this.startWith(this.annotation, "data:");
-    let prev = opts.map ? opts.map.prev : void 0;
-    let text = this.loadMap(opts.from, prev);
-    if (!this.mapFile && opts.from) {
-      this.mapFile = opts.from;
-    }
-    if (this.mapFile)
-      this.root = dirname$1$1(this.mapFile);
-    if (text)
-      this.text = text;
-  }
-  consumer() {
-    if (!this.consumerCache) {
-      this.consumerCache = new SourceMapConsumer$2$1(this.text);
-    }
-    return this.consumerCache;
-  }
-  decodeInline(text) {
-    let baseCharsetUri = /^data:application\/json;charset=utf-?8;base64,/;
-    let baseUri = /^data:application\/json;base64,/;
-    let charsetUri = /^data:application\/json;charset=utf-?8,/;
-    let uri = /^data:application\/json,/;
-    if (charsetUri.test(text) || uri.test(text)) {
-      return decodeURIComponent(text.substr(RegExp.lastMatch.length));
-    }
-    if (baseCharsetUri.test(text) || baseUri.test(text)) {
-      return fromBase64$1(text.substr(RegExp.lastMatch.length));
-    }
-    let encoding = text.match(/data:application\/json;([^,]+),/)[1];
-    throw new Error("Unsupported source map encoding " + encoding);
-  }
-  getAnnotationURL(sourceMapString) {
-    return sourceMapString.replace(/^\/\*\s*# sourceMappingURL=/, "").trim();
-  }
-  isMap(map) {
-    if (typeof map !== "object")
-      return false;
-    return typeof map.mappings === "string" || typeof map._mappings === "string" || Array.isArray(map.sections);
-  }
-  loadAnnotation(css) {
-    let comments = css.match(/\/\*\s*# sourceMappingURL=/gm);
-    if (!comments)
-      return;
-    let start = css.lastIndexOf(comments.pop());
-    let end = css.indexOf("*/", start);
-    if (start > -1 && end > -1) {
-      this.annotation = this.getAnnotationURL(css.substring(start, end));
-    }
-  }
-  loadFile(path) {
-    this.root = dirname$1$1(path);
-    if (existsSync$1(path)) {
-      this.mapFile = path;
-      return readFileSync$1(path, "utf-8").toString().trim();
-    }
-  }
-  loadMap(file, prev) {
-    if (prev === false)
-      return false;
-    if (prev) {
-      if (typeof prev === "string") {
-        return prev;
-      } else if (typeof prev === "function") {
-        let prevPath = prev(file);
-        if (prevPath) {
-          let map = this.loadFile(prevPath);
-          if (!map) {
-            throw new Error(
-              "Unable to load previous source map: " + prevPath.toString()
-            );
-          }
-          return map;
-        }
-      } else if (prev instanceof SourceMapConsumer$2$1) {
-        return SourceMapGenerator$2$1.fromSourceMap(prev).toString();
-      } else if (prev instanceof SourceMapGenerator$2$1) {
-        return prev.toString();
-      } else if (this.isMap(prev)) {
-        return JSON.stringify(prev);
-      } else {
-        throw new Error(
-          "Unsupported previous source map format: " + prev.toString()
-        );
-      }
-    } else if (this.inline) {
-      return this.decodeInline(this.annotation);
-    } else if (this.annotation) {
-      let map = this.annotation;
-      if (file)
-        map = join$1(dirname$1$1(file), map);
-      return this.loadFile(map);
-    }
-  }
-  startWith(string, start) {
-    if (!string)
-      return false;
-    return string.substr(0, start.length) === start;
-  }
-  withContent() {
-    return !!(this.consumer().sourcesContent && this.consumer().sourcesContent.length > 0);
-  }
-};
-var previousMap$1 = PreviousMap$2$1;
-PreviousMap$2$1.default = PreviousMap$2$1;
-var { SourceMapConsumer: SourceMapConsumer$1$1, SourceMapGenerator: SourceMapGenerator$1$1 } = require$$2$1;
-var { fileURLToPath: fileURLToPath$1, pathToFileURL: pathToFileURL$1$1 } = require$$2$1;
-var { isAbsolute: isAbsolute$1, resolve: resolve$1$1 } = require$$2$1;
-var { nanoid: nanoid$2 } = nonSecure$1;
-var terminalHighlight$2 = require$$2$1;
-var CssSyntaxError$1$1 = cssSyntaxError$1;
-var PreviousMap$1$1 = previousMap$1;
-var fromOffsetCache$1 = Symbol("fromOffsetCache");
-var sourceMapAvailable$1$1 = Boolean(SourceMapConsumer$1$1 && SourceMapGenerator$1$1);
-var pathAvailable$1$1 = Boolean(resolve$1$1 && isAbsolute$1);
-var Input$4$1 = class Input {
-  constructor(css, opts = {}) {
-    if (css === null || typeof css === "undefined" || typeof css === "object" && !css.toString) {
-      throw new Error(`PostCSS received ${css} instead of CSS string`);
-    }
-    this.css = css.toString();
-    if (this.css[0] === "\uFEFF" || this.css[0] === "\uFFFE") {
-      this.hasBOM = true;
-      this.css = this.css.slice(1);
-    } else {
-      this.hasBOM = false;
-    }
-    if (opts.from) {
-      if (!pathAvailable$1$1 || /^\w+:\/\//.test(opts.from) || isAbsolute$1(opts.from)) {
-        this.file = opts.from;
-      } else {
-        this.file = resolve$1$1(opts.from);
-      }
-    }
-    if (pathAvailable$1$1 && sourceMapAvailable$1$1) {
-      let map = new PreviousMap$1$1(this.css, opts);
-      if (map.text) {
-        this.map = map;
-        let file = map.consumer().file;
-        if (!this.file && file)
-          this.file = this.mapResolve(file);
-      }
-    }
-    if (!this.file) {
-      this.id = "<input css " + nanoid$2(6) + ">";
-    }
-    if (this.map)
-      this.map.file = this.from;
-  }
-  error(message, line, column, opts = {}) {
-    let result2, endLine, endColumn;
-    if (line && typeof line === "object") {
-      let start = line;
-      let end = column;
-      if (typeof start.offset === "number") {
-        let pos = this.fromOffset(start.offset);
-        line = pos.line;
-        column = pos.col;
-      } else {
-        line = start.line;
-        column = start.column;
-      }
-      if (typeof end.offset === "number") {
-        let pos = this.fromOffset(end.offset);
-        endLine = pos.line;
-        endColumn = pos.col;
-      } else {
-        endLine = end.line;
-        endColumn = end.column;
-      }
-    } else if (!column) {
-      let pos = this.fromOffset(line);
-      line = pos.line;
-      column = pos.col;
-    }
-    let origin = this.origin(line, column, endLine, endColumn);
-    if (origin) {
-      result2 = new CssSyntaxError$1$1(
-        message,
-        origin.endLine === void 0 ? origin.line : { column: origin.column, line: origin.line },
-        origin.endLine === void 0 ? origin.column : { column: origin.endColumn, line: origin.endLine },
-        origin.source,
-        origin.file,
-        opts.plugin
-      );
-    } else {
-      result2 = new CssSyntaxError$1$1(
-        message,
-        endLine === void 0 ? line : { column, line },
-        endLine === void 0 ? column : { column: endColumn, line: endLine },
-        this.css,
-        this.file,
-        opts.plugin
-      );
-    }
-    result2.input = { column, endColumn, endLine, line, source: this.css };
-    if (this.file) {
-      if (pathToFileURL$1$1) {
-        result2.input.url = pathToFileURL$1$1(this.file).toString();
-      }
-      result2.input.file = this.file;
-    }
-    return result2;
-  }
-  fromOffset(offset) {
-    let lastLine, lineToIndex;
-    if (!this[fromOffsetCache$1]) {
-      let lines = this.css.split("\n");
-      lineToIndex = new Array(lines.length);
-      let prevIndex = 0;
-      for (let i2 = 0, l2 = lines.length; i2 < l2; i2++) {
-        lineToIndex[i2] = prevIndex;
-        prevIndex += lines[i2].length + 1;
-      }
-      this[fromOffsetCache$1] = lineToIndex;
-    } else {
-      lineToIndex = this[fromOffsetCache$1];
-    }
-    lastLine = lineToIndex[lineToIndex.length - 1];
-    let min = 0;
-    if (offset >= lastLine) {
-      min = lineToIndex.length - 1;
-    } else {
-      let max = lineToIndex.length - 2;
-      let mid;
-      while (min < max) {
-        mid = min + (max - min >> 1);
-        if (offset < lineToIndex[mid]) {
-          max = mid - 1;
-        } else if (offset >= lineToIndex[mid + 1]) {
-          min = mid + 1;
-        } else {
-          min = mid;
-          break;
-        }
-      }
-    }
-    return {
-      col: offset - lineToIndex[min] + 1,
-      line: min + 1
-    };
-  }
-  mapResolve(file) {
-    if (/^\w+:\/\//.test(file)) {
-      return file;
-    }
-    return resolve$1$1(this.map.consumer().sourceRoot || this.map.root || ".", file);
-  }
-  origin(line, column, endLine, endColumn) {
-    if (!this.map)
-      return false;
-    let consumer = this.map.consumer();
-    let from = consumer.originalPositionFor({ column, line });
-    if (!from.source)
-      return false;
-    let to;
-    if (typeof endLine === "number") {
-      to = consumer.originalPositionFor({ column: endColumn, line: endLine });
-    }
-    let fromUrl;
-    if (isAbsolute$1(from.source)) {
-      fromUrl = pathToFileURL$1$1(from.source);
-    } else {
-      fromUrl = new URL(
-        from.source,
-        this.map.consumer().sourceRoot || pathToFileURL$1$1(this.map.mapFile)
-      );
-    }
-    let result2 = {
-      column: from.column,
-      endColumn: to && to.column,
-      endLine: to && to.line,
-      line: from.line,
-      url: fromUrl.toString()
-    };
-    if (fromUrl.protocol === "file:") {
-      if (fileURLToPath$1) {
-        result2.file = fileURLToPath$1(fromUrl);
-      } else {
-        throw new Error(`file: protocol is not available in this PostCSS build`);
-      }
-    }
-    let source = consumer.sourceContentFor(from.source);
-    if (source)
-      result2.source = source;
-    return result2;
-  }
-  toJSON() {
-    let json = {};
-    for (let name of ["hasBOM", "css", "file", "id"]) {
-      if (this[name] != null) {
-        json[name] = this[name];
-      }
-    }
-    if (this.map) {
-      json.map = { ...this.map };
-      if (json.map.consumerCache) {
-        json.map.consumerCache = void 0;
-      }
-    }
-    return json;
-  }
-  get from() {
-    return this.file || this.id;
-  }
-};
-var input$1 = Input$4$1;
-Input$4$1.default = Input$4$1;
-if (terminalHighlight$2 && terminalHighlight$2.registerInput) {
-  terminalHighlight$2.registerInput(Input$4$1);
-}
-var { SourceMapConsumer: SourceMapConsumer$3, SourceMapGenerator: SourceMapGenerator$3 } = require$$2$1;
-var { dirname: dirname$2, relative: relative$1, resolve: resolve$2, sep: sep$1 } = require$$2$1;
-var { pathToFileURL: pathToFileURL$2 } = require$$2$1;
-var Input$3$1 = input$1;
-var sourceMapAvailable$2 = Boolean(SourceMapConsumer$3 && SourceMapGenerator$3);
-var pathAvailable$2 = Boolean(dirname$2 && resolve$2 && relative$1 && sep$1);
-var MapGenerator$2$1 = class MapGenerator {
-  constructor(stringify2, root2, opts, cssString) {
-    this.stringify = stringify2;
-    this.mapOpts = opts.map || {};
-    this.root = root2;
-    this.opts = opts;
-    this.css = cssString;
-    this.originalCSS = cssString;
-    this.usesFileUrls = !this.mapOpts.from && this.mapOpts.absolute;
-    this.memoizedFileURLs = /* @__PURE__ */ new Map();
-    this.memoizedPaths = /* @__PURE__ */ new Map();
-    this.memoizedURLs = /* @__PURE__ */ new Map();
-  }
-  addAnnotation() {
-    let content;
-    if (this.isInline()) {
-      content = "data:application/json;base64," + this.toBase64(this.map.toString());
-    } else if (typeof this.mapOpts.annotation === "string") {
-      content = this.mapOpts.annotation;
-    } else if (typeof this.mapOpts.annotation === "function") {
-      content = this.mapOpts.annotation(this.opts.to, this.root);
-    } else {
-      content = this.outputFile() + ".map";
-    }
-    let eol = "\n";
-    if (this.css.includes("\r\n"))
-      eol = "\r\n";
-    this.css += eol + "/*# sourceMappingURL=" + content + " */";
-  }
-  applyPrevMaps() {
-    for (let prev of this.previous()) {
-      let from = this.toUrl(this.path(prev.file));
-      let root2 = prev.root || dirname$2(prev.file);
-      let map;
-      if (this.mapOpts.sourcesContent === false) {
-        map = new SourceMapConsumer$3(prev.text);
-        if (map.sourcesContent) {
-          map.sourcesContent = null;
-        }
-      } else {
-        map = prev.consumer();
-      }
-      this.map.applySourceMap(map, from, this.toUrl(this.path(root2)));
-    }
-  }
-  clearAnnotation() {
-    if (this.mapOpts.annotation === false)
-      return;
-    if (this.root) {
-      let node2;
-      for (let i2 = this.root.nodes.length - 1; i2 >= 0; i2--) {
-        node2 = this.root.nodes[i2];
-        if (node2.type !== "comment")
-          continue;
-        if (node2.text.indexOf("# sourceMappingURL=") === 0) {
-          this.root.removeChild(i2);
-        }
-      }
-    } else if (this.css) {
-      this.css = this.css.replace(/\n*?\/\*#[\S\s]*?\*\/$/gm, "");
-    }
-  }
-  generate() {
-    this.clearAnnotation();
-    if (pathAvailable$2 && sourceMapAvailable$2 && this.isMap()) {
-      return this.generateMap();
-    } else {
-      let result2 = "";
-      this.stringify(this.root, (i2) => {
-        result2 += i2;
-      });
-      return [result2];
-    }
-  }
-  generateMap() {
-    if (this.root) {
-      this.generateString();
-    } else if (this.previous().length === 1) {
-      let prev = this.previous()[0].consumer();
-      prev.file = this.outputFile();
-      this.map = SourceMapGenerator$3.fromSourceMap(prev, {
-        ignoreInvalidMapping: true
-      });
-    } else {
-      this.map = new SourceMapGenerator$3({
-        file: this.outputFile(),
-        ignoreInvalidMapping: true
-      });
-      this.map.addMapping({
-        generated: { column: 0, line: 1 },
-        original: { column: 0, line: 1 },
-        source: this.opts.from ? this.toUrl(this.path(this.opts.from)) : "<no source>"
-      });
-    }
-    if (this.isSourcesContent())
-      this.setSourcesContent();
-    if (this.root && this.previous().length > 0)
-      this.applyPrevMaps();
-    if (this.isAnnotation())
-      this.addAnnotation();
-    if (this.isInline()) {
-      return [this.css];
-    } else {
-      return [this.css, this.map];
-    }
-  }
-  generateString() {
-    this.css = "";
-    this.map = new SourceMapGenerator$3({
-      file: this.outputFile(),
-      ignoreInvalidMapping: true
-    });
-    let line = 1;
-    let column = 1;
-    let noSource = "<no source>";
-    let mapping = {
-      generated: { column: 0, line: 0 },
-      original: { column: 0, line: 0 },
-      source: ""
-    };
-    let lines, last;
-    this.stringify(this.root, (str, node2, type) => {
-      this.css += str;
-      if (node2 && type !== "end") {
-        mapping.generated.line = line;
-        mapping.generated.column = column - 1;
-        if (node2.source && node2.source.start) {
-          mapping.source = this.sourcePath(node2);
-          mapping.original.line = node2.source.start.line;
-          mapping.original.column = node2.source.start.column - 1;
-          this.map.addMapping(mapping);
-        } else {
-          mapping.source = noSource;
-          mapping.original.line = 1;
-          mapping.original.column = 0;
-          this.map.addMapping(mapping);
-        }
-      }
-      lines = str.match(/\n/g);
-      if (lines) {
-        line += lines.length;
-        last = str.lastIndexOf("\n");
-        column = str.length - last;
-      } else {
-        column += str.length;
-      }
-      if (node2 && type !== "start") {
-        let p = node2.parent || { raws: {} };
-        let childless = node2.type === "decl" || node2.type === "atrule" && !node2.nodes;
-        if (!childless || node2 !== p.last || p.raws.semicolon) {
-          if (node2.source && node2.source.end) {
-            mapping.source = this.sourcePath(node2);
-            mapping.original.line = node2.source.end.line;
-            mapping.original.column = node2.source.end.column - 1;
-            mapping.generated.line = line;
-            mapping.generated.column = column - 2;
-            this.map.addMapping(mapping);
-          } else {
-            mapping.source = noSource;
-            mapping.original.line = 1;
-            mapping.original.column = 0;
-            mapping.generated.line = line;
-            mapping.generated.column = column - 1;
-            this.map.addMapping(mapping);
-          }
-        }
-      }
-    });
-  }
-  isAnnotation() {
-    if (this.isInline()) {
-      return true;
-    }
-    if (typeof this.mapOpts.annotation !== "undefined") {
-      return this.mapOpts.annotation;
-    }
-    if (this.previous().length) {
-      return this.previous().some((i2) => i2.annotation);
-    }
-    return true;
-  }
-  isInline() {
-    if (typeof this.mapOpts.inline !== "undefined") {
-      return this.mapOpts.inline;
-    }
-    let annotation = this.mapOpts.annotation;
-    if (typeof annotation !== "undefined" && annotation !== true) {
-      return false;
-    }
-    if (this.previous().length) {
-      return this.previous().some((i2) => i2.inline);
-    }
-    return true;
-  }
-  isMap() {
-    if (typeof this.opts.map !== "undefined") {
-      return !!this.opts.map;
-    }
-    return this.previous().length > 0;
-  }
-  isSourcesContent() {
-    if (typeof this.mapOpts.sourcesContent !== "undefined") {
-      return this.mapOpts.sourcesContent;
-    }
-    if (this.previous().length) {
-      return this.previous().some((i2) => i2.withContent());
-    }
-    return true;
-  }
-  outputFile() {
-    if (this.opts.to) {
-      return this.path(this.opts.to);
-    } else if (this.opts.from) {
-      return this.path(this.opts.from);
-    } else {
-      return "to.css";
-    }
-  }
-  path(file) {
-    if (this.mapOpts.absolute)
-      return file;
-    if (file.charCodeAt(0) === 60)
-      return file;
-    if (/^\w+:\/\//.test(file))
-      return file;
-    let cached = this.memoizedPaths.get(file);
-    if (cached)
-      return cached;
-    let from = this.opts.to ? dirname$2(this.opts.to) : ".";
-    if (typeof this.mapOpts.annotation === "string") {
-      from = dirname$2(resolve$2(from, this.mapOpts.annotation));
-    }
-    let path = relative$1(from, file);
-    this.memoizedPaths.set(file, path);
-    return path;
-  }
-  previous() {
-    if (!this.previousMaps) {
-      this.previousMaps = [];
-      if (this.root) {
-        this.root.walk((node2) => {
-          if (node2.source && node2.source.input.map) {
-            let map = node2.source.input.map;
-            if (!this.previousMaps.includes(map)) {
-              this.previousMaps.push(map);
-            }
-          }
-        });
-      } else {
-        let input2 = new Input$3$1(this.originalCSS, this.opts);
-        if (input2.map)
-          this.previousMaps.push(input2.map);
-      }
-    }
-    return this.previousMaps;
-  }
-  setSourcesContent() {
-    let already = {};
-    if (this.root) {
-      this.root.walk((node2) => {
-        if (node2.source) {
-          let from = node2.source.input.from;
-          if (from && !already[from]) {
-            already[from] = true;
-            let fromUrl = this.usesFileUrls ? this.toFileUrl(from) : this.toUrl(this.path(from));
-            this.map.setSourceContent(fromUrl, node2.source.input.css);
-          }
-        }
-      });
-    } else if (this.css) {
-      let from = this.opts.from ? this.toUrl(this.path(this.opts.from)) : "<no source>";
-      this.map.setSourceContent(from, this.css);
-    }
-  }
-  sourcePath(node2) {
-    if (this.mapOpts.from) {
-      return this.toUrl(this.mapOpts.from);
-    } else if (this.usesFileUrls) {
-      return this.toFileUrl(node2.source.input.from);
-    } else {
-      return this.toUrl(this.path(node2.source.input.from));
-    }
-  }
-  toBase64(str) {
-    if (Buffer) {
-      return Buffer.from(str).toString("base64");
-    } else {
-      return window.btoa(unescape(encodeURIComponent(str)));
-    }
-  }
-  toFileUrl(path) {
-    let cached = this.memoizedFileURLs.get(path);
-    if (cached)
-      return cached;
-    if (pathToFileURL$2) {
-      let fileURL = pathToFileURL$2(path).toString();
-      this.memoizedFileURLs.set(path, fileURL);
-      return fileURL;
-    } else {
-      throw new Error(
-        "`map.absolute` option is not available in this PostCSS build"
-      );
-    }
-  }
-  toUrl(path) {
-    let cached = this.memoizedURLs.get(path);
-    if (cached)
-      return cached;
-    if (sep$1 === "\\") {
-      path = path.replace(/\\/g, "/");
-    }
-    let url = encodeURI(path).replace(/[#?]/g, encodeURIComponent);
-    this.memoizedURLs.set(path, url);
-    return url;
-  }
-};
-var mapGenerator$1 = MapGenerator$2$1;
-var Node$2$1 = node$1;
-var Comment$4$1 = class Comment extends Node$2$1 {
-  constructor(defaults) {
-    super(defaults);
-    this.type = "comment";
-  }
-};
-var comment$1 = Comment$4$1;
-Comment$4$1.default = Comment$4$1;
-var { isClean: isClean$1$1, my: my$1$1 } = symbols$1;
-var Declaration$3$1 = declaration$1;
 var Comment$3$1 = comment$1;
+var Declaration$3$1 = declaration$1;
 var Node$1$1 = node$1;
-var parse$4$1;
-var Rule$4$1;
+var { isClean: isClean$1$1, my: my$1$1 } = symbols$1;
 var AtRule$4$1;
+var parse$4$1;
 var Root$6$1;
+var Rule$4$1;
 function cleanSource$1(nodes) {
   return nodes.map((i2) => {
     if (i2.nodes)
@@ -3041,11 +2376,11 @@ function cleanSource$1(nodes) {
     return i2;
   });
 }
-function markDirtyUp$1(node2) {
+function markTreeDirty$1(node2) {
   node2[isClean$1$1] = false;
   if (node2.proxyOf.nodes) {
     for (let i2 of node2.proxyOf.nodes) {
-      markDirtyUp$1(i2);
+      markTreeDirty$1(i2);
     }
   }
 }
@@ -3166,7 +2501,11 @@ var Container$7$1 = class Container extends Node$1$1 {
   insertBefore(exist, add) {
     let existIndex = this.index(exist);
     let type = existIndex === 0 ? "prepend" : false;
-    let nodes = this.normalize(add, this.proxyOf.nodes[existIndex], type).reverse();
+    let nodes = this.normalize(
+      add,
+      this.proxyOf.nodes[existIndex],
+      type
+    ).reverse();
     existIndex = this.index(exist);
     for (let node2 of nodes)
       this.proxyOf.nodes.splice(existIndex, 0, node2);
@@ -3206,7 +2545,7 @@ var Container$7$1 = class Container extends Node$1$1 {
         nodes.value = String(nodes.value);
       }
       nodes = [new Declaration$3$1(nodes)];
-    } else if (nodes.selector) {
+    } else if (nodes.selector || nodes.selectors) {
       nodes = [new Rule$4$1(nodes)];
     } else if (nodes.name) {
       nodes = [new AtRule$4$1(nodes)];
@@ -3222,7 +2561,9 @@ var Container$7$1 = class Container extends Node$1$1 {
       if (i2.parent)
         i2.parent.removeChild(i2);
       if (i2[isClean$1$1])
-        markDirtyUp$1(i2);
+        markTreeDirty$1(i2);
+      if (!i2.raws)
+        i2.raws = {};
       if (typeof i2.raws.before === "undefined") {
         if (sample && typeof sample.raws.before !== "undefined") {
           i2.raws.before = sample.raws.before.replace(/\S/g, "");
@@ -3422,9 +2763,29 @@ Container$7$1.rebuild = (node2) => {
   }
 };
 var Container$6$1 = container$1;
+var AtRule$3$1 = class AtRule extends Container$6$1 {
+  constructor(defaults) {
+    super(defaults);
+    this.type = "atrule";
+  }
+  append(...children) {
+    if (!this.proxyOf.nodes)
+      this.nodes = [];
+    return super.append(...children);
+  }
+  prepend(...children) {
+    if (!this.proxyOf.nodes)
+      this.nodes = [];
+    return super.prepend(...children);
+  }
+};
+var atRule$1 = AtRule$3$1;
+AtRule$3$1.default = AtRule$3$1;
+Container$6$1.registerAtRule(AtRule$3$1);
+var Container$5$1 = container$1;
 var LazyResult$4$1;
 var Processor$3$1;
-var Document$3$1 = class Document2 extends Container$6$1 {
+var Document$3$1 = class Document2 extends Container$5$1 {
   constructor(defaults) {
     super({ type: "document", ...defaults });
     if (!this.nodes) {
@@ -3444,77 +2805,848 @@ Document$3$1.registerProcessor = (dependant) => {
 };
 var document$1$1 = Document$3$1;
 Document$3$1.default = Document$3$1;
-var printed$1 = {};
-var warnOnce$2$1 = function warnOnce(message) {
-  if (printed$1[message])
-    return;
-  printed$1[message] = true;
-  if (typeof console !== "undefined" && console.warn) {
-    console.warn(message);
+var urlAlphabet$1 = "useandom-26T198340PX75pxJACKVERYMINDBUSHWOLF_GQZbfghjklqvwyzrict";
+var customAlphabet$1 = (alphabet, defaultSize = 21) => {
+  return (size = defaultSize) => {
+    let id = "";
+    let i2 = size;
+    while (i2--) {
+      id += alphabet[Math.random() * alphabet.length | 0];
+    }
+    return id;
+  };
+};
+var nanoid$1$1 = (size = 21) => {
+  let id = "";
+  let i2 = size;
+  while (i2--) {
+    id += urlAlphabet$1[Math.random() * 64 | 0];
+  }
+  return id;
+};
+var nonSecure$1 = { nanoid: nanoid$1$1, customAlphabet: customAlphabet$1 };
+var { existsSync: existsSync$1, readFileSync: readFileSync$1 } = require$$2$1;
+var { dirname: dirname$1$1, join: join$1 } = require$$2$1;
+var { SourceMapConsumer: SourceMapConsumer$2$1, SourceMapGenerator: SourceMapGenerator$2$1 } = require$$2$1;
+function fromBase64$1(str) {
+  if (Buffer) {
+    return Buffer.from(str, "base64").toString();
+  } else {
+    return window.atob(str);
+  }
+}
+var PreviousMap$2$1 = class PreviousMap {
+  constructor(css, opts) {
+    if (opts.map === false)
+      return;
+    this.loadAnnotation(css);
+    this.inline = this.startWith(this.annotation, "data:");
+    let prev = opts.map ? opts.map.prev : void 0;
+    let text = this.loadMap(opts.from, prev);
+    if (!this.mapFile && opts.from) {
+      this.mapFile = opts.from;
+    }
+    if (this.mapFile)
+      this.root = dirname$1$1(this.mapFile);
+    if (text)
+      this.text = text;
+  }
+  consumer() {
+    if (!this.consumerCache) {
+      this.consumerCache = new SourceMapConsumer$2$1(this.text);
+    }
+    return this.consumerCache;
+  }
+  decodeInline(text) {
+    let baseCharsetUri = /^data:application\/json;charset=utf-?8;base64,/;
+    let baseUri = /^data:application\/json;base64,/;
+    let charsetUri = /^data:application\/json;charset=utf-?8,/;
+    let uri = /^data:application\/json,/;
+    let uriMatch = text.match(charsetUri) || text.match(uri);
+    if (uriMatch) {
+      return decodeURIComponent(text.substr(uriMatch[0].length));
+    }
+    let baseUriMatch = text.match(baseCharsetUri) || text.match(baseUri);
+    if (baseUriMatch) {
+      return fromBase64$1(text.substr(baseUriMatch[0].length));
+    }
+    let encoding = text.match(/data:application\/json;([^,]+),/)[1];
+    throw new Error("Unsupported source map encoding " + encoding);
+  }
+  getAnnotationURL(sourceMapString) {
+    return sourceMapString.replace(/^\/\*\s*# sourceMappingURL=/, "").trim();
+  }
+  isMap(map) {
+    if (typeof map !== "object")
+      return false;
+    return typeof map.mappings === "string" || typeof map._mappings === "string" || Array.isArray(map.sections);
+  }
+  loadAnnotation(css) {
+    let comments = css.match(/\/\*\s*# sourceMappingURL=/g);
+    if (!comments)
+      return;
+    let start = css.lastIndexOf(comments.pop());
+    let end = css.indexOf("*/", start);
+    if (start > -1 && end > -1) {
+      this.annotation = this.getAnnotationURL(css.substring(start, end));
+    }
+  }
+  loadFile(path) {
+    this.root = dirname$1$1(path);
+    if (existsSync$1(path)) {
+      this.mapFile = path;
+      return readFileSync$1(path, "utf-8").toString().trim();
+    }
+  }
+  loadMap(file, prev) {
+    if (prev === false)
+      return false;
+    if (prev) {
+      if (typeof prev === "string") {
+        return prev;
+      } else if (typeof prev === "function") {
+        let prevPath = prev(file);
+        if (prevPath) {
+          let map = this.loadFile(prevPath);
+          if (!map) {
+            throw new Error(
+              "Unable to load previous source map: " + prevPath.toString()
+            );
+          }
+          return map;
+        }
+      } else if (prev instanceof SourceMapConsumer$2$1) {
+        return SourceMapGenerator$2$1.fromSourceMap(prev).toString();
+      } else if (prev instanceof SourceMapGenerator$2$1) {
+        return prev.toString();
+      } else if (this.isMap(prev)) {
+        return JSON.stringify(prev);
+      } else {
+        throw new Error(
+          "Unsupported previous source map format: " + prev.toString()
+        );
+      }
+    } else if (this.inline) {
+      return this.decodeInline(this.annotation);
+    } else if (this.annotation) {
+      let map = this.annotation;
+      if (file)
+        map = join$1(dirname$1$1(file), map);
+      return this.loadFile(map);
+    }
+  }
+  startWith(string, start) {
+    if (!string)
+      return false;
+    return string.substr(0, start.length) === start;
+  }
+  withContent() {
+    return !!(this.consumer().sourcesContent && this.consumer().sourcesContent.length > 0);
   }
 };
-var Warning$2$1 = class Warning {
-  constructor(text, opts = {}) {
-    this.type = "warning";
-    this.text = text;
-    if (opts.node && opts.node.source) {
-      let range = opts.node.rangeBy(opts);
-      this.line = range.start.line;
-      this.column = range.start.column;
-      this.endLine = range.end.line;
-      this.endColumn = range.end.column;
+var previousMap$1 = PreviousMap$2$1;
+PreviousMap$2$1.default = PreviousMap$2$1;
+var { nanoid: nanoid$2 } = nonSecure$1;
+var { isAbsolute: isAbsolute$1, resolve: resolve$1$1 } = require$$2$1;
+var { SourceMapConsumer: SourceMapConsumer$1$1, SourceMapGenerator: SourceMapGenerator$1$1 } = require$$2$1;
+var { fileURLToPath: fileURLToPath$1, pathToFileURL: pathToFileURL$1$1 } = require$$2$1;
+var CssSyntaxError$1$1 = cssSyntaxError$1;
+var PreviousMap$1$1 = previousMap$1;
+var terminalHighlight$2 = require$$2$1;
+var fromOffsetCache$1 = Symbol("fromOffsetCache");
+var sourceMapAvailable$1$1 = Boolean(SourceMapConsumer$1$1 && SourceMapGenerator$1$1);
+var pathAvailable$1$1 = Boolean(resolve$1$1 && isAbsolute$1);
+var Input$4$1 = class Input {
+  constructor(css, opts = {}) {
+    if (css === null || typeof css === "undefined" || typeof css === "object" && !css.toString) {
+      throw new Error(`PostCSS received ${css} instead of CSS string`);
     }
-    for (let opt in opts)
-      this[opt] = opts[opt];
-  }
-  toString() {
-    if (this.node) {
-      return this.node.error(this.text, {
-        index: this.index,
-        plugin: this.plugin,
-        word: this.word
-      }).message;
+    this.css = css.toString();
+    if (this.css[0] === "\uFEFF" || this.css[0] === "\uFFFE") {
+      this.hasBOM = true;
+      this.css = this.css.slice(1);
+    } else {
+      this.hasBOM = false;
     }
-    if (this.plugin) {
-      return this.plugin + ": " + this.text;
-    }
-    return this.text;
-  }
-};
-var warning$1 = Warning$2$1;
-Warning$2$1.default = Warning$2$1;
-var Warning$1$1 = warning$1;
-var Result$3$1 = class Result {
-  constructor(processor2, root2, opts) {
-    this.processor = processor2;
-    this.messages = [];
-    this.root = root2;
-    this.opts = opts;
-    this.css = void 0;
-    this.map = void 0;
-  }
-  toString() {
-    return this.css;
-  }
-  warn(text, opts = {}) {
-    if (!opts.plugin) {
-      if (this.lastPlugin && this.lastPlugin.postcssPlugin) {
-        opts.plugin = this.lastPlugin.postcssPlugin;
+    if (opts.from) {
+      if (!pathAvailable$1$1 || /^\w+:\/\//.test(opts.from) || isAbsolute$1(opts.from)) {
+        this.file = opts.from;
+      } else {
+        this.file = resolve$1$1(opts.from);
       }
     }
-    let warning2 = new Warning$1$1(text, opts);
-    this.messages.push(warning2);
-    return warning2;
+    if (pathAvailable$1$1 && sourceMapAvailable$1$1) {
+      let map = new PreviousMap$1$1(this.css, opts);
+      if (map.text) {
+        this.map = map;
+        let file = map.consumer().file;
+        if (!this.file && file)
+          this.file = this.mapResolve(file);
+      }
+    }
+    if (!this.file) {
+      this.id = "<input css " + nanoid$2(6) + ">";
+    }
+    if (this.map)
+      this.map.file = this.from;
   }
-  warnings() {
-    return this.messages.filter((i2) => i2.type === "warning");
+  error(message, line, column, opts = {}) {
+    let endColumn, endLine, result2;
+    if (line && typeof line === "object") {
+      let start = line;
+      let end = column;
+      if (typeof start.offset === "number") {
+        let pos = this.fromOffset(start.offset);
+        line = pos.line;
+        column = pos.col;
+      } else {
+        line = start.line;
+        column = start.column;
+      }
+      if (typeof end.offset === "number") {
+        let pos = this.fromOffset(end.offset);
+        endLine = pos.line;
+        endColumn = pos.col;
+      } else {
+        endLine = end.line;
+        endColumn = end.column;
+      }
+    } else if (!column) {
+      let pos = this.fromOffset(line);
+      line = pos.line;
+      column = pos.col;
+    }
+    let origin = this.origin(line, column, endLine, endColumn);
+    if (origin) {
+      result2 = new CssSyntaxError$1$1(
+        message,
+        origin.endLine === void 0 ? origin.line : { column: origin.column, line: origin.line },
+        origin.endLine === void 0 ? origin.column : { column: origin.endColumn, line: origin.endLine },
+        origin.source,
+        origin.file,
+        opts.plugin
+      );
+    } else {
+      result2 = new CssSyntaxError$1$1(
+        message,
+        endLine === void 0 ? line : { column, line },
+        endLine === void 0 ? column : { column: endColumn, line: endLine },
+        this.css,
+        this.file,
+        opts.plugin
+      );
+    }
+    result2.input = { column, endColumn, endLine, line, source: this.css };
+    if (this.file) {
+      if (pathToFileURL$1$1) {
+        result2.input.url = pathToFileURL$1$1(this.file).toString();
+      }
+      result2.input.file = this.file;
+    }
+    return result2;
   }
-  get content() {
-    return this.css;
+  fromOffset(offset) {
+    let lastLine, lineToIndex;
+    if (!this[fromOffsetCache$1]) {
+      let lines = this.css.split("\n");
+      lineToIndex = new Array(lines.length);
+      let prevIndex = 0;
+      for (let i2 = 0, l2 = lines.length; i2 < l2; i2++) {
+        lineToIndex[i2] = prevIndex;
+        prevIndex += lines[i2].length + 1;
+      }
+      this[fromOffsetCache$1] = lineToIndex;
+    } else {
+      lineToIndex = this[fromOffsetCache$1];
+    }
+    lastLine = lineToIndex[lineToIndex.length - 1];
+    let min = 0;
+    if (offset >= lastLine) {
+      min = lineToIndex.length - 1;
+    } else {
+      let max = lineToIndex.length - 2;
+      let mid;
+      while (min < max) {
+        mid = min + (max - min >> 1);
+        if (offset < lineToIndex[mid]) {
+          max = mid - 1;
+        } else if (offset >= lineToIndex[mid + 1]) {
+          min = mid + 1;
+        } else {
+          min = mid;
+          break;
+        }
+      }
+    }
+    return {
+      col: offset - lineToIndex[min] + 1,
+      line: min + 1
+    };
+  }
+  mapResolve(file) {
+    if (/^\w+:\/\//.test(file)) {
+      return file;
+    }
+    return resolve$1$1(this.map.consumer().sourceRoot || this.map.root || ".", file);
+  }
+  origin(line, column, endLine, endColumn) {
+    if (!this.map)
+      return false;
+    let consumer = this.map.consumer();
+    let from = consumer.originalPositionFor({ column, line });
+    if (!from.source)
+      return false;
+    let to;
+    if (typeof endLine === "number") {
+      to = consumer.originalPositionFor({ column: endColumn, line: endLine });
+    }
+    let fromUrl;
+    if (isAbsolute$1(from.source)) {
+      fromUrl = pathToFileURL$1$1(from.source);
+    } else {
+      fromUrl = new URL(
+        from.source,
+        this.map.consumer().sourceRoot || pathToFileURL$1$1(this.map.mapFile)
+      );
+    }
+    let result2 = {
+      column: from.column,
+      endColumn: to && to.column,
+      endLine: to && to.line,
+      line: from.line,
+      url: fromUrl.toString()
+    };
+    if (fromUrl.protocol === "file:") {
+      if (fileURLToPath$1) {
+        result2.file = fileURLToPath$1(fromUrl);
+      } else {
+        throw new Error(`file: protocol is not available in this PostCSS build`);
+      }
+    }
+    let source = consumer.sourceContentFor(from.source);
+    if (source)
+      result2.source = source;
+    return result2;
+  }
+  toJSON() {
+    let json = {};
+    for (let name of ["hasBOM", "css", "file", "id"]) {
+      if (this[name] != null) {
+        json[name] = this[name];
+      }
+    }
+    if (this.map) {
+      json.map = { ...this.map };
+      if (json.map.consumerCache) {
+        json.map.consumerCache = void 0;
+      }
+    }
+    return json;
+  }
+  get from() {
+    return this.file || this.id;
   }
 };
-var result$1 = Result$3$1;
-Result$3$1.default = Result$3$1;
+var input$1 = Input$4$1;
+Input$4$1.default = Input$4$1;
+if (terminalHighlight$2 && terminalHighlight$2.registerInput) {
+  terminalHighlight$2.registerInput(Input$4$1);
+}
+var Container$4$1 = container$1;
+var LazyResult$3$1;
+var Processor$2$1;
+var Root$5$1 = class Root extends Container$4$1 {
+  constructor(defaults) {
+    super(defaults);
+    this.type = "root";
+    if (!this.nodes)
+      this.nodes = [];
+  }
+  normalize(child, sample, type) {
+    let nodes = super.normalize(child);
+    if (sample) {
+      if (type === "prepend") {
+        if (this.nodes.length > 1) {
+          sample.raws.before = this.nodes[1].raws.before;
+        } else {
+          delete sample.raws.before;
+        }
+      } else if (this.first !== sample) {
+        for (let node2 of nodes) {
+          node2.raws.before = sample.raws.before;
+        }
+      }
+    }
+    return nodes;
+  }
+  removeChild(child, ignore) {
+    let index2 = this.index(child);
+    if (!ignore && index2 === 0 && this.nodes.length > 1) {
+      this.nodes[1].raws.before = this.nodes[index2].raws.before;
+    }
+    return super.removeChild(child);
+  }
+  toResult(opts = {}) {
+    let lazy = new LazyResult$3$1(new Processor$2$1(), this, opts);
+    return lazy.stringify();
+  }
+};
+Root$5$1.registerLazyResult = (dependant) => {
+  LazyResult$3$1 = dependant;
+};
+Root$5$1.registerProcessor = (dependant) => {
+  Processor$2$1 = dependant;
+};
+var root$1 = Root$5$1;
+Root$5$1.default = Root$5$1;
+Container$4$1.registerRoot(Root$5$1);
+var list$2$1 = {
+  comma(string) {
+    return list$2$1.split(string, [","], true);
+  },
+  space(string) {
+    let spaces = [" ", "\n", "	"];
+    return list$2$1.split(string, spaces);
+  },
+  split(string, separators, last) {
+    let array = [];
+    let current = "";
+    let split = false;
+    let func = 0;
+    let inQuote = false;
+    let prevQuote = "";
+    let escape = false;
+    for (let letter of string) {
+      if (escape) {
+        escape = false;
+      } else if (letter === "\\") {
+        escape = true;
+      } else if (inQuote) {
+        if (letter === prevQuote) {
+          inQuote = false;
+        }
+      } else if (letter === '"' || letter === "'") {
+        inQuote = true;
+        prevQuote = letter;
+      } else if (letter === "(") {
+        func += 1;
+      } else if (letter === ")") {
+        if (func > 0)
+          func -= 1;
+      } else if (func === 0) {
+        if (separators.includes(letter))
+          split = true;
+      }
+      if (split) {
+        if (current !== "")
+          array.push(current.trim());
+        current = "";
+        split = false;
+      } else {
+        current += letter;
+      }
+    }
+    if (last || current !== "")
+      array.push(current.trim());
+    return array;
+  }
+};
+var list_1$1 = list$2$1;
+list$2$1.default = list$2$1;
+var Container$3$1 = container$1;
+var list$1$1 = list_1$1;
+var Rule$3$1 = class Rule extends Container$3$1 {
+  constructor(defaults) {
+    super(defaults);
+    this.type = "rule";
+    if (!this.nodes)
+      this.nodes = [];
+  }
+  get selectors() {
+    return list$1$1.comma(this.selector);
+  }
+  set selectors(values) {
+    let match = this.selector ? this.selector.match(/,\s*/) : null;
+    let sep2 = match ? match[0] : "," + this.raw("between", "beforeOpen");
+    this.selector = values.join(sep2);
+  }
+};
+var rule$1 = Rule$3$1;
+Rule$3$1.default = Rule$3$1;
+Container$3$1.registerRule(Rule$3$1);
+var AtRule$2$1 = atRule$1;
+var Comment$2$1 = comment$1;
+var Declaration$2$1 = declaration$1;
+var Input$3$1 = input$1;
+var PreviousMap2$1 = previousMap$1;
+var Root$4$1 = root$1;
+var Rule$2$1 = rule$1;
+function fromJSON$1$1(json, inputs) {
+  if (Array.isArray(json))
+    return json.map((n2) => fromJSON$1$1(n2));
+  let { inputs: ownInputs, ...defaults } = json;
+  if (ownInputs) {
+    inputs = [];
+    for (let input2 of ownInputs) {
+      let inputHydrated = { ...input2, __proto__: Input$3$1.prototype };
+      if (inputHydrated.map) {
+        inputHydrated.map = {
+          ...inputHydrated.map,
+          __proto__: PreviousMap2$1.prototype
+        };
+      }
+      inputs.push(inputHydrated);
+    }
+  }
+  if (defaults.nodes) {
+    defaults.nodes = json.nodes.map((n2) => fromJSON$1$1(n2, inputs));
+  }
+  if (defaults.source) {
+    let { inputId, ...source } = defaults.source;
+    defaults.source = source;
+    if (inputId != null) {
+      defaults.source.input = inputs[inputId];
+    }
+  }
+  if (defaults.type === "root") {
+    return new Root$4$1(defaults);
+  } else if (defaults.type === "decl") {
+    return new Declaration$2$1(defaults);
+  } else if (defaults.type === "rule") {
+    return new Rule$2$1(defaults);
+  } else if (defaults.type === "comment") {
+    return new Comment$2$1(defaults);
+  } else if (defaults.type === "atrule") {
+    return new AtRule$2$1(defaults);
+  } else {
+    throw new Error("Unknown node type: " + json.type);
+  }
+}
+var fromJSON_1$1 = fromJSON$1$1;
+fromJSON$1$1.default = fromJSON$1$1;
+var { dirname: dirname$2, relative: relative$1, resolve: resolve$2, sep: sep$1 } = require$$2$1;
+var { SourceMapConsumer: SourceMapConsumer$3, SourceMapGenerator: SourceMapGenerator$3 } = require$$2$1;
+var { pathToFileURL: pathToFileURL$2 } = require$$2$1;
+var Input$2$1 = input$1;
+var sourceMapAvailable$2 = Boolean(SourceMapConsumer$3 && SourceMapGenerator$3);
+var pathAvailable$2 = Boolean(dirname$2 && resolve$2 && relative$1 && sep$1);
+var MapGenerator$2$1 = class MapGenerator {
+  constructor(stringify2, root2, opts, cssString) {
+    this.stringify = stringify2;
+    this.mapOpts = opts.map || {};
+    this.root = root2;
+    this.opts = opts;
+    this.css = cssString;
+    this.originalCSS = cssString;
+    this.usesFileUrls = !this.mapOpts.from && this.mapOpts.absolute;
+    this.memoizedFileURLs = /* @__PURE__ */ new Map();
+    this.memoizedPaths = /* @__PURE__ */ new Map();
+    this.memoizedURLs = /* @__PURE__ */ new Map();
+  }
+  addAnnotation() {
+    let content;
+    if (this.isInline()) {
+      content = "data:application/json;base64," + this.toBase64(this.map.toString());
+    } else if (typeof this.mapOpts.annotation === "string") {
+      content = this.mapOpts.annotation;
+    } else if (typeof this.mapOpts.annotation === "function") {
+      content = this.mapOpts.annotation(this.opts.to, this.root);
+    } else {
+      content = this.outputFile() + ".map";
+    }
+    let eol = "\n";
+    if (this.css.includes("\r\n"))
+      eol = "\r\n";
+    this.css += eol + "/*# sourceMappingURL=" + content + " */";
+  }
+  applyPrevMaps() {
+    for (let prev of this.previous()) {
+      let from = this.toUrl(this.path(prev.file));
+      let root2 = prev.root || dirname$2(prev.file);
+      let map;
+      if (this.mapOpts.sourcesContent === false) {
+        map = new SourceMapConsumer$3(prev.text);
+        if (map.sourcesContent) {
+          map.sourcesContent = null;
+        }
+      } else {
+        map = prev.consumer();
+      }
+      this.map.applySourceMap(map, from, this.toUrl(this.path(root2)));
+    }
+  }
+  clearAnnotation() {
+    if (this.mapOpts.annotation === false)
+      return;
+    if (this.root) {
+      let node2;
+      for (let i2 = this.root.nodes.length - 1; i2 >= 0; i2--) {
+        node2 = this.root.nodes[i2];
+        if (node2.type !== "comment")
+          continue;
+        if (node2.text.startsWith("# sourceMappingURL=")) {
+          this.root.removeChild(i2);
+        }
+      }
+    } else if (this.css) {
+      this.css = this.css.replace(/\n*\/\*#[\S\s]*?\*\/$/gm, "");
+    }
+  }
+  generate() {
+    this.clearAnnotation();
+    if (pathAvailable$2 && sourceMapAvailable$2 && this.isMap()) {
+      return this.generateMap();
+    } else {
+      let result2 = "";
+      this.stringify(this.root, (i2) => {
+        result2 += i2;
+      });
+      return [result2];
+    }
+  }
+  generateMap() {
+    if (this.root) {
+      this.generateString();
+    } else if (this.previous().length === 1) {
+      let prev = this.previous()[0].consumer();
+      prev.file = this.outputFile();
+      this.map = SourceMapGenerator$3.fromSourceMap(prev, {
+        ignoreInvalidMapping: true
+      });
+    } else {
+      this.map = new SourceMapGenerator$3({
+        file: this.outputFile(),
+        ignoreInvalidMapping: true
+      });
+      this.map.addMapping({
+        generated: { column: 0, line: 1 },
+        original: { column: 0, line: 1 },
+        source: this.opts.from ? this.toUrl(this.path(this.opts.from)) : "<no source>"
+      });
+    }
+    if (this.isSourcesContent())
+      this.setSourcesContent();
+    if (this.root && this.previous().length > 0)
+      this.applyPrevMaps();
+    if (this.isAnnotation())
+      this.addAnnotation();
+    if (this.isInline()) {
+      return [this.css];
+    } else {
+      return [this.css, this.map];
+    }
+  }
+  generateString() {
+    this.css = "";
+    this.map = new SourceMapGenerator$3({
+      file: this.outputFile(),
+      ignoreInvalidMapping: true
+    });
+    let line = 1;
+    let column = 1;
+    let noSource = "<no source>";
+    let mapping = {
+      generated: { column: 0, line: 0 },
+      original: { column: 0, line: 0 },
+      source: ""
+    };
+    let last, lines;
+    this.stringify(this.root, (str, node2, type) => {
+      this.css += str;
+      if (node2 && type !== "end") {
+        mapping.generated.line = line;
+        mapping.generated.column = column - 1;
+        if (node2.source && node2.source.start) {
+          mapping.source = this.sourcePath(node2);
+          mapping.original.line = node2.source.start.line;
+          mapping.original.column = node2.source.start.column - 1;
+          this.map.addMapping(mapping);
+        } else {
+          mapping.source = noSource;
+          mapping.original.line = 1;
+          mapping.original.column = 0;
+          this.map.addMapping(mapping);
+        }
+      }
+      lines = str.match(/\n/g);
+      if (lines) {
+        line += lines.length;
+        last = str.lastIndexOf("\n");
+        column = str.length - last;
+      } else {
+        column += str.length;
+      }
+      if (node2 && type !== "start") {
+        let p = node2.parent || { raws: {} };
+        let childless = node2.type === "decl" || node2.type === "atrule" && !node2.nodes;
+        if (!childless || node2 !== p.last || p.raws.semicolon) {
+          if (node2.source && node2.source.end) {
+            mapping.source = this.sourcePath(node2);
+            mapping.original.line = node2.source.end.line;
+            mapping.original.column = node2.source.end.column - 1;
+            mapping.generated.line = line;
+            mapping.generated.column = column - 2;
+            this.map.addMapping(mapping);
+          } else {
+            mapping.source = noSource;
+            mapping.original.line = 1;
+            mapping.original.column = 0;
+            mapping.generated.line = line;
+            mapping.generated.column = column - 1;
+            this.map.addMapping(mapping);
+          }
+        }
+      }
+    });
+  }
+  isAnnotation() {
+    if (this.isInline()) {
+      return true;
+    }
+    if (typeof this.mapOpts.annotation !== "undefined") {
+      return this.mapOpts.annotation;
+    }
+    if (this.previous().length) {
+      return this.previous().some((i2) => i2.annotation);
+    }
+    return true;
+  }
+  isInline() {
+    if (typeof this.mapOpts.inline !== "undefined") {
+      return this.mapOpts.inline;
+    }
+    let annotation = this.mapOpts.annotation;
+    if (typeof annotation !== "undefined" && annotation !== true) {
+      return false;
+    }
+    if (this.previous().length) {
+      return this.previous().some((i2) => i2.inline);
+    }
+    return true;
+  }
+  isMap() {
+    if (typeof this.opts.map !== "undefined") {
+      return !!this.opts.map;
+    }
+    return this.previous().length > 0;
+  }
+  isSourcesContent() {
+    if (typeof this.mapOpts.sourcesContent !== "undefined") {
+      return this.mapOpts.sourcesContent;
+    }
+    if (this.previous().length) {
+      return this.previous().some((i2) => i2.withContent());
+    }
+    return true;
+  }
+  outputFile() {
+    if (this.opts.to) {
+      return this.path(this.opts.to);
+    } else if (this.opts.from) {
+      return this.path(this.opts.from);
+    } else {
+      return "to.css";
+    }
+  }
+  path(file) {
+    if (this.mapOpts.absolute)
+      return file;
+    if (file.charCodeAt(0) === 60)
+      return file;
+    if (/^\w+:\/\//.test(file))
+      return file;
+    let cached = this.memoizedPaths.get(file);
+    if (cached)
+      return cached;
+    let from = this.opts.to ? dirname$2(this.opts.to) : ".";
+    if (typeof this.mapOpts.annotation === "string") {
+      from = dirname$2(resolve$2(from, this.mapOpts.annotation));
+    }
+    let path = relative$1(from, file);
+    this.memoizedPaths.set(file, path);
+    return path;
+  }
+  previous() {
+    if (!this.previousMaps) {
+      this.previousMaps = [];
+      if (this.root) {
+        this.root.walk((node2) => {
+          if (node2.source && node2.source.input.map) {
+            let map = node2.source.input.map;
+            if (!this.previousMaps.includes(map)) {
+              this.previousMaps.push(map);
+            }
+          }
+        });
+      } else {
+        let input2 = new Input$2$1(this.originalCSS, this.opts);
+        if (input2.map)
+          this.previousMaps.push(input2.map);
+      }
+    }
+    return this.previousMaps;
+  }
+  setSourcesContent() {
+    let already = {};
+    if (this.root) {
+      this.root.walk((node2) => {
+        if (node2.source) {
+          let from = node2.source.input.from;
+          if (from && !already[from]) {
+            already[from] = true;
+            let fromUrl = this.usesFileUrls ? this.toFileUrl(from) : this.toUrl(this.path(from));
+            this.map.setSourceContent(fromUrl, node2.source.input.css);
+          }
+        }
+      });
+    } else if (this.css) {
+      let from = this.opts.from ? this.toUrl(this.path(this.opts.from)) : "<no source>";
+      this.map.setSourceContent(from, this.css);
+    }
+  }
+  sourcePath(node2) {
+    if (this.mapOpts.from) {
+      return this.toUrl(this.mapOpts.from);
+    } else if (this.usesFileUrls) {
+      return this.toFileUrl(node2.source.input.from);
+    } else {
+      return this.toUrl(this.path(node2.source.input.from));
+    }
+  }
+  toBase64(str) {
+    if (Buffer) {
+      return Buffer.from(str).toString("base64");
+    } else {
+      return window.btoa(unescape(encodeURIComponent(str)));
+    }
+  }
+  toFileUrl(path) {
+    let cached = this.memoizedFileURLs.get(path);
+    if (cached)
+      return cached;
+    if (pathToFileURL$2) {
+      let fileURL = pathToFileURL$2(path).toString();
+      this.memoizedFileURLs.set(path, fileURL);
+      return fileURL;
+    } else {
+      throw new Error(
+        "`map.absolute` option is not available in this PostCSS build"
+      );
+    }
+  }
+  toUrl(path) {
+    let cached = this.memoizedURLs.get(path);
+    if (cached)
+      return cached;
+    if (sep$1 === "\\") {
+      path = path.replace(/\\/g, "/");
+    }
+    let url = encodeURI(path).replace(/[#?]/g, encodeURIComponent);
+    this.memoizedURLs.set(path, url);
+    return url;
+  }
+};
+var mapGenerator$1 = MapGenerator$2$1;
 var SINGLE_QUOTE$1 = "'".charCodeAt(0);
 var DOUBLE_QUOTE$1 = '"'.charCodeAt(0);
 var BACKSLASH$1 = "\\".charCodeAt(0);
@@ -3541,8 +3673,8 @@ var RE_HEX_ESCAPE$1 = /[\da-f]/i;
 var tokenize$1 = function tokenizer(input2, options = {}) {
   let css = input2.css.valueOf();
   let ignore = options.ignoreErrors;
-  let code, next, quote, content, escape;
-  let escaped, escapePos, prev, n2, currentToken;
+  let code, content, escape, next, quote;
+  let currentToken, escaped, escapePos, n2, prev;
   let length = css.length;
   let pos = 0;
   let buffer = [];
@@ -3725,154 +3857,12 @@ var tokenize$1 = function tokenizer(input2, options = {}) {
     position
   };
 };
-var Container$5$1 = container$1;
-var AtRule$3$1 = class AtRule extends Container$5$1 {
-  constructor(defaults) {
-    super(defaults);
-    this.type = "atrule";
-  }
-  append(...children) {
-    if (!this.proxyOf.nodes)
-      this.nodes = [];
-    return super.append(...children);
-  }
-  prepend(...children) {
-    if (!this.proxyOf.nodes)
-      this.nodes = [];
-    return super.prepend(...children);
-  }
-};
-var atRule$1 = AtRule$3$1;
-AtRule$3$1.default = AtRule$3$1;
-Container$5$1.registerAtRule(AtRule$3$1);
-var Container$4$1 = container$1;
-var LazyResult$3$1;
-var Processor$2$1;
-var Root$5$1 = class Root extends Container$4$1 {
-  constructor(defaults) {
-    super(defaults);
-    this.type = "root";
-    if (!this.nodes)
-      this.nodes = [];
-  }
-  normalize(child, sample, type) {
-    let nodes = super.normalize(child);
-    if (sample) {
-      if (type === "prepend") {
-        if (this.nodes.length > 1) {
-          sample.raws.before = this.nodes[1].raws.before;
-        } else {
-          delete sample.raws.before;
-        }
-      } else if (this.first !== sample) {
-        for (let node2 of nodes) {
-          node2.raws.before = sample.raws.before;
-        }
-      }
-    }
-    return nodes;
-  }
-  removeChild(child, ignore) {
-    let index2 = this.index(child);
-    if (!ignore && index2 === 0 && this.nodes.length > 1) {
-      this.nodes[1].raws.before = this.nodes[index2].raws.before;
-    }
-    return super.removeChild(child);
-  }
-  toResult(opts = {}) {
-    let lazy = new LazyResult$3$1(new Processor$2$1(), this, opts);
-    return lazy.stringify();
-  }
-};
-Root$5$1.registerLazyResult = (dependant) => {
-  LazyResult$3$1 = dependant;
-};
-Root$5$1.registerProcessor = (dependant) => {
-  Processor$2$1 = dependant;
-};
-var root$1 = Root$5$1;
-Root$5$1.default = Root$5$1;
-Container$4$1.registerRoot(Root$5$1);
-var list$2$1 = {
-  comma(string) {
-    return list$2$1.split(string, [","], true);
-  },
-  space(string) {
-    let spaces = [" ", "\n", "	"];
-    return list$2$1.split(string, spaces);
-  },
-  split(string, separators, last) {
-    let array = [];
-    let current = "";
-    let split = false;
-    let func = 0;
-    let inQuote = false;
-    let prevQuote = "";
-    let escape = false;
-    for (let letter of string) {
-      if (escape) {
-        escape = false;
-      } else if (letter === "\\") {
-        escape = true;
-      } else if (inQuote) {
-        if (letter === prevQuote) {
-          inQuote = false;
-        }
-      } else if (letter === '"' || letter === "'") {
-        inQuote = true;
-        prevQuote = letter;
-      } else if (letter === "(") {
-        func += 1;
-      } else if (letter === ")") {
-        if (func > 0)
-          func -= 1;
-      } else if (func === 0) {
-        if (separators.includes(letter))
-          split = true;
-      }
-      if (split) {
-        if (current !== "")
-          array.push(current.trim());
-        current = "";
-        split = false;
-      } else {
-        current += letter;
-      }
-    }
-    if (last || current !== "")
-      array.push(current.trim());
-    return array;
-  }
-};
-var list_1$1 = list$2$1;
-list$2$1.default = list$2$1;
-var Container$3$1 = container$1;
-var list$1$1 = list_1$1;
-var Rule$3$1 = class Rule extends Container$3$1 {
-  constructor(defaults) {
-    super(defaults);
-    this.type = "rule";
-    if (!this.nodes)
-      this.nodes = [];
-  }
-  get selectors() {
-    return list$1$1.comma(this.selector);
-  }
-  set selectors(values) {
-    let match = this.selector ? this.selector.match(/,\s*/) : null;
-    let sep2 = match ? match[0] : "," + this.raw("between", "beforeOpen");
-    this.selector = values.join(sep2);
-  }
-};
-var rule$1 = Rule$3$1;
-Rule$3$1.default = Rule$3$1;
-Container$3$1.registerRule(Rule$3$1);
-var Declaration$2$1 = declaration$1;
+var AtRule$1$1 = atRule$1;
+var Comment$1$1 = comment$1;
+var Declaration$1$1 = declaration$1;
+var Root$3$1 = root$1;
+var Rule$1$1 = rule$1;
 var tokenizer2$1 = tokenize$1;
-var Comment$2$1 = comment$1;
-var AtRule$2$1 = atRule$1;
-var Root$4$1 = root$1;
-var Rule$2$1 = rule$1;
 var SAFE_COMMENT_NEIGHBOR$1 = {
   empty: true,
   space: true
@@ -3888,7 +3878,7 @@ function findLastWithPosition$1(tokens) {
 var Parser$1$1 = class Parser {
   constructor(input2) {
     this.input = input2;
-    this.root = new Root$4$1();
+    this.root = new Root$3$1();
     this.current = this.root;
     this.spaces = "";
     this.semicolon = false;
@@ -3896,7 +3886,7 @@ var Parser$1$1 = class Parser {
     this.root.source = { input: input2, start: { column: 1, line: 1, offset: 0 } };
   }
   atrule(token) {
-    let node2 = new AtRule$2$1();
+    let node2 = new AtRule$1$1();
     node2.name = token[1].slice(1);
     if (node2.name === "") {
       this.unnamedAtrule(node2, token);
@@ -3994,7 +3984,7 @@ var Parser$1$1 = class Parser {
   }
   colon(tokens) {
     let brackets = 0;
-    let token, type, prev;
+    let prev, token, type;
     for (let [i2, element] of tokens.entries()) {
       token = element;
       type = token[0];
@@ -4018,7 +4008,7 @@ var Parser$1$1 = class Parser {
     return false;
   }
   comment(token) {
-    let node2 = new Comment$2$1();
+    let node2 = new Comment$1$1();
     this.init(node2, token[2]);
     node2.source.end = this.getPosition(token[3] || token[2]);
     node2.source.end.offset++;
@@ -4038,7 +4028,7 @@ var Parser$1$1 = class Parser {
     this.tokenizer = tokenizer2$1(this.input);
   }
   decl(tokens, customProperty) {
-    let node2 = new Declaration$2$1();
+    let node2 = new Declaration$1$1();
     this.init(node2, tokens[0][2]);
     let last = tokens[tokens.length - 1];
     if (last[0] === ";") {
@@ -4104,12 +4094,12 @@ var Parser$1$1 = class Parser {
         let str = "";
         for (let j = i2; j > 0; j--) {
           let type = cache[j][0];
-          if (str.trim().indexOf("!") === 0 && type !== "space") {
+          if (str.trim().startsWith("!") && type !== "space") {
             break;
           }
           str = cache.pop()[1] + str;
         }
-        if (str.trim().indexOf("!") === 0) {
+        if (str.trim().startsWith("!")) {
           node2.important = true;
           node2.raws.important = str;
           tokens = cache;
@@ -4137,7 +4127,7 @@ var Parser$1$1 = class Parser {
     );
   }
   emptyRule(token) {
-    let node2 = new Rule$2$1();
+    let node2 = new Rule$1$1();
     this.init(node2, token[2]);
     node2.selector = "";
     node2.raws.between = "";
@@ -4327,7 +4317,7 @@ var Parser$1$1 = class Parser {
   }
   rule(tokens) {
     tokens.pop();
-    let node2 = new Rule$2$1();
+    let node2 = new Rule$1$1();
     this.init(node2, tokens[0][2]);
     node2.raws.between = this.spacesAndCommentsFromEnd(tokens);
     this.raw(node2, "selector", tokens);
@@ -4410,10 +4400,10 @@ var Parser$1$1 = class Parser {
 };
 var parser$1 = Parser$1$1;
 var Container$2$1 = container$1;
+var Input$1$1 = input$1;
 var Parser2$1 = parser$1;
-var Input$2$1 = input$1;
 function parse$3$1(css, opts) {
-  let input2 = new Input$2$1(css, opts);
+  let input2 = new Input$1$1(css, opts);
   let parser2 = new Parser2$1(input2);
   try {
     parser2.parse();
@@ -4436,15 +4426,86 @@ function parse$3$1(css, opts) {
 var parse_1$1 = parse$3$1;
 parse$3$1.default = parse$3$1;
 Container$2$1.registerParse(parse$3$1);
-var { isClean: isClean$3, my: my$3 } = symbols$1;
-var MapGenerator$1$1 = mapGenerator$1;
-var stringify$2$1 = stringify_1$1;
+var Warning$2$1 = class Warning {
+  constructor(text, opts = {}) {
+    this.type = "warning";
+    this.text = text;
+    if (opts.node && opts.node.source) {
+      let range = opts.node.rangeBy(opts);
+      this.line = range.start.line;
+      this.column = range.start.column;
+      this.endLine = range.end.line;
+      this.endColumn = range.end.column;
+    }
+    for (let opt in opts)
+      this[opt] = opts[opt];
+  }
+  toString() {
+    if (this.node) {
+      return this.node.error(this.text, {
+        index: this.index,
+        plugin: this.plugin,
+        word: this.word
+      }).message;
+    }
+    if (this.plugin) {
+      return this.plugin + ": " + this.text;
+    }
+    return this.text;
+  }
+};
+var warning$1 = Warning$2$1;
+Warning$2$1.default = Warning$2$1;
+var Warning$1$1 = warning$1;
+var Result$3$1 = class Result {
+  constructor(processor2, root2, opts) {
+    this.processor = processor2;
+    this.messages = [];
+    this.root = root2;
+    this.opts = opts;
+    this.css = void 0;
+    this.map = void 0;
+  }
+  toString() {
+    return this.css;
+  }
+  warn(text, opts = {}) {
+    if (!opts.plugin) {
+      if (this.lastPlugin && this.lastPlugin.postcssPlugin) {
+        opts.plugin = this.lastPlugin.postcssPlugin;
+      }
+    }
+    let warning2 = new Warning$1$1(text, opts);
+    this.messages.push(warning2);
+    return warning2;
+  }
+  warnings() {
+    return this.messages.filter((i2) => i2.type === "warning");
+  }
+  get content() {
+    return this.css;
+  }
+};
+var result$1 = Result$3$1;
+Result$3$1.default = Result$3$1;
+var printed$1 = {};
+var warnOnce$2$1 = function warnOnce(message) {
+  if (printed$1[message])
+    return;
+  printed$1[message] = true;
+  if (typeof console !== "undefined" && console.warn) {
+    console.warn(message);
+  }
+};
 var Container$1$1 = container$1;
 var Document$2$1 = document$1$1;
-var warnOnce$1$1 = warnOnce$2$1;
-var Result$2$1 = result$1;
+var MapGenerator$1$1 = mapGenerator$1;
 var parse$2$1 = parse_1$1;
-var Root$3$1 = root$1;
+var Result$2$1 = result$1;
+var Root$2$1 = root$1;
+var stringify$2$1 = stringify_1$1;
+var { isClean: isClean$3, my: my$3 } = symbols$1;
+var warnOnce$1$1 = warnOnce$2$1;
 var TYPE_TO_CLASS_NAME$1 = {
   atrule: "AtRule",
   comment: "Comment",
@@ -4921,13 +4982,13 @@ LazyResult$2$1.registerPostcss = (dependant) => {
 };
 var lazyResult$1 = LazyResult$2$1;
 LazyResult$2$1.default = LazyResult$2$1;
-Root$3$1.registerLazyResult(LazyResult$2$1);
+Root$2$1.registerLazyResult(LazyResult$2$1);
 Document$2$1.registerLazyResult(LazyResult$2$1);
 var MapGenerator2$1 = mapGenerator$1;
-var stringify$1$1 = stringify_1$1;
-var warnOnce2$1 = warnOnce$2$1;
 var parse$1$1 = parse_1$1;
 var Result$1$1 = result$1;
+var stringify$1$1 = stringify_1$1;
+var warnOnce2$1 = warnOnce$2$1;
 var NoWorkResult$1$1 = class NoWorkResult {
   constructor(processor2, css, opts) {
     css = css.toString();
@@ -4940,10 +5001,10 @@ var NoWorkResult$1$1 = class NoWorkResult {
     let str = stringify$1$1;
     this.result = new Result$1$1(this._processor, root2, this._opts);
     this.result.css = css;
-    let self = this;
+    let self2 = this;
     Object.defineProperty(this.result, "root", {
       get() {
-        return self.root;
+        return self2.root;
       }
     });
     let map = new MapGenerator2$1(str, root2, this._opts, css);
@@ -5034,13 +5095,13 @@ var NoWorkResult$1$1 = class NoWorkResult {
 };
 var noWorkResult$1 = NoWorkResult$1$1;
 NoWorkResult$1$1.default = NoWorkResult$1$1;
-var NoWorkResult2$1 = noWorkResult$1;
-var LazyResult$1$1 = lazyResult$1;
 var Document$1$1 = document$1$1;
-var Root$2$1 = root$1;
+var LazyResult$1$1 = lazyResult$1;
+var NoWorkResult2$1 = noWorkResult$1;
+var Root$1$1 = root$1;
 var Processor$1$1 = class Processor {
   constructor(plugins = []) {
-    this.version = "8.4.38";
+    this.version = "8.4.47";
     this.plugins = this.normalize(plugins);
   }
   normalize(plugins) {
@@ -5083,76 +5144,26 @@ var Processor$1$1 = class Processor {
 };
 var processor$1 = Processor$1$1;
 Processor$1$1.default = Processor$1$1;
-Root$2$1.registerProcessor(Processor$1$1);
+Root$1$1.registerProcessor(Processor$1$1);
 Document$1$1.registerProcessor(Processor$1$1);
-var Declaration$1$1 = declaration$1;
-var PreviousMap2$1 = previousMap$1;
-var Comment$1$1 = comment$1;
-var AtRule$1$1 = atRule$1;
-var Input$1$1 = input$1;
-var Root$1$1 = root$1;
-var Rule$1$1 = rule$1;
-function fromJSON$1$1(json, inputs) {
-  if (Array.isArray(json))
-    return json.map((n2) => fromJSON$1$1(n2));
-  let { inputs: ownInputs, ...defaults } = json;
-  if (ownInputs) {
-    inputs = [];
-    for (let input2 of ownInputs) {
-      let inputHydrated = { ...input2, __proto__: Input$1$1.prototype };
-      if (inputHydrated.map) {
-        inputHydrated.map = {
-          ...inputHydrated.map,
-          __proto__: PreviousMap2$1.prototype
-        };
-      }
-      inputs.push(inputHydrated);
-    }
-  }
-  if (defaults.nodes) {
-    defaults.nodes = json.nodes.map((n2) => fromJSON$1$1(n2, inputs));
-  }
-  if (defaults.source) {
-    let { inputId, ...source } = defaults.source;
-    defaults.source = source;
-    if (inputId != null) {
-      defaults.source.input = inputs[inputId];
-    }
-  }
-  if (defaults.type === "root") {
-    return new Root$1$1(defaults);
-  } else if (defaults.type === "decl") {
-    return new Declaration$1$1(defaults);
-  } else if (defaults.type === "rule") {
-    return new Rule$1$1(defaults);
-  } else if (defaults.type === "comment") {
-    return new Comment$1$1(defaults);
-  } else if (defaults.type === "atrule") {
-    return new AtRule$1$1(defaults);
-  } else {
-    throw new Error("Unknown node type: " + json.type);
-  }
-}
-var fromJSON_1$1 = fromJSON$1$1;
-fromJSON$1$1.default = fromJSON$1$1;
+var AtRule2$1 = atRule$1;
+var Comment2$1 = comment$1;
+var Container2$1 = container$1;
 var CssSyntaxError2$1 = cssSyntaxError$1;
 var Declaration2$1 = declaration$1;
-var LazyResult2$1 = lazyResult$1;
-var Container2$1 = container$1;
-var Processor2$1 = processor$1;
-var stringify$5 = stringify_1$1;
-var fromJSON$2 = fromJSON_1$1;
 var Document22 = document$1$1;
-var Warning2$1 = warning$1;
-var Comment2$1 = comment$1;
-var AtRule2$1 = atRule$1;
-var Result2$1 = result$1;
+var fromJSON$2 = fromJSON_1$1;
 var Input2$1 = input$1;
-var parse$5 = parse_1$1;
+var LazyResult2$1 = lazyResult$1;
 var list$3 = list_1$1;
-var Rule2$1 = rule$1;
-var Root2$1 = root$1;
 var Node2$1 = node$1;
+var parse$5 = parse_1$1;
+var Processor2$1 = processor$1;
+var Result2$1 = result$1;
+var Root2$1 = root$1;
+var Rule2$1 = rule$1;
+var stringify$5 = stringify_1$1;
+var Warning2$1 = warning$1;
 function postcss$3(...plugins) {
   if (plugins.length === 1 && Array.isArray(plugins[0])) {
     plugins = plugins[0];
@@ -5293,11 +5304,16 @@ function adaptCssForReplay(cssText, cache) {
   const cachedStyle = cache == null ? void 0 : cache.stylesWithHoverClass.get(cssText);
   if (cachedStyle)
     return cachedStyle;
-  const ast = postcss$1$1([
-    mediaSelectorPlugin,
-    pseudoClassPlugin
-  ]).process(cssText);
-  const result2 = ast.css;
+  let result2 = cssText;
+  try {
+    const ast = postcss$1$1([
+      mediaSelectorPlugin,
+      pseudoClassPlugin
+    ]).process(cssText);
+    result2 = ast.css;
+  } catch (error) {
+    console.warn("Failed to adapt css for replay", error);
+  }
   cache == null ? void 0 : cache.stylesWithHoverClass.set(cssText, result2);
   return result2;
 }
@@ -5306,6 +5322,40 @@ function createCache() {
   return {
     stylesWithHoverClass
   };
+}
+function applyCssSplits(n2, cssText, hackCss, cache) {
+  const childTextNodes = [];
+  for (const scn of n2.childNodes) {
+    if (scn.type === NodeType$2.Text) {
+      childTextNodes.push(scn);
+    }
+  }
+  const cssTextSplits = cssText.split("/* rr_split */");
+  while (cssTextSplits.length > 1 && cssTextSplits.length > childTextNodes.length) {
+    cssTextSplits.splice(-2, 2, cssTextSplits.slice(-2).join(""));
+  }
+  for (let i2 = 0; i2 < childTextNodes.length; i2++) {
+    const childTextNode = childTextNodes[i2];
+    const cssTextSection = cssTextSplits[i2];
+    if (childTextNode && cssTextSection) {
+      try {
+        childTextNode.textContent = hackCss ? adaptCssForReplay(cssTextSection, cache) : cssTextSection;
+      } catch (err) {
+        console.warn(`Highlight failed to set rrweb css ${err}`);
+      }
+    }
+  }
+}
+function buildStyleNode(n2, styleEl, cssText, options) {
+  const { doc, hackCss, cache } = options;
+  if (n2.childNodes.length) {
+    applyCssSplits(n2, cssText, hackCss, cache);
+  } else {
+    if (hackCss) {
+      cssText = adaptCssForReplay(cssText, cache);
+    }
+    styleEl.appendChild(doc.createTextNode(cssText));
+  }
 }
 function buildNode(n2, options) {
   var _a2;
@@ -5356,14 +5406,18 @@ function buildNode(n2, options) {
           specialAttributes[name] = value;
           continue;
         }
-        const isTextarea = tagName === "textarea" && name === "value";
-        const isRemoteOrDynamicCss = tagName === "style" && name === "_cssText";
-        if (isRemoteOrDynamicCss && hackCss && typeof value === "string") {
-          value = adaptCssForReplay(value, cache);
-        }
-        if ((isTextarea || isRemoteOrDynamicCss) && typeof value === "string") {
+        if (typeof value !== "string")
+          ;
+        else if (tagName === "style" && name === "_cssText") {
+          buildStyleNode(n2, node2, value, options);
+          continue;
+        } else if (tagName === "textarea" && name === "value") {
           node2.appendChild(doc.createTextNode(value));
-          n2.childNodes = [];
+          try {
+            n2.childNodes = [];
+          } catch (err) {
+            console.warn(`Highlight failed to set rrweb text area child nodes ${err}`);
+          }
           continue;
         }
         try {
@@ -5415,9 +5469,9 @@ function buildNode(n2, options) {
           }
         }
         if (name === "rr_width") {
-          node2.style.width = value.toString();
+          node2.style.setProperty("width", value.toString());
         } else if (name === "rr_height") {
-          node2.style.height = value.toString();
+          node2.style.setProperty("height", value.toString());
         } else if (name === "rr_mediaCurrentTime" && typeof value === "number") {
           node2.currentTime = value;
         } else if (name === "rr_mediaState") {
@@ -5456,9 +5510,10 @@ function buildNode(n2, options) {
       return node2;
     }
     case NodeType$2.Text:
-      return doc.createTextNode(
-        n2.isStyle && hackCss ? adaptCssForReplay(n2.textContent, cache) : n2.textContent
-      );
+      if (n2.isStyle && hackCss) {
+        return doc.createTextNode(adaptCssForReplay(n2.textContent, cache));
+      }
+      return doc.createTextNode(n2.textContent);
     case NodeType$2.CDATA:
       return doc.createCDATASection(n2.textContent);
     case NodeType$2.Comment:
@@ -5602,16 +5657,10 @@ function rebuild(n2, options) {
 }
 var __defProp2 = Object.defineProperty;
 var __defNormalProp2 = (obj, key, value) => key in obj ? __defProp2(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
-var __publicField2 = (obj, key, value) => {
-  __defNormalProp2(obj, typeof key !== "symbol" ? key + "" : key, value);
-  return value;
-};
+var __publicField2 = (obj, key, value) => __defNormalProp2(obj, typeof key !== "symbol" ? key + "" : key, value);
 var __defProp22 = Object.defineProperty;
 var __defNormalProp22 = (obj, key, value) => key in obj ? __defProp22(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
-var __publicField22 = (obj, key, value) => {
-  __defNormalProp22(obj, typeof key !== "symbol" ? key + "" : key, value);
-  return value;
-};
+var __publicField22 = (obj, key, value) => __defNormalProp22(obj, typeof key !== "symbol" ? key + "" : key, value);
 var NodeType$1 = /* @__PURE__ */ ((NodeType2) => {
   NodeType2[NodeType2["Document"] = 0] = "Document";
   NodeType2[NodeType2["DocumentType"] = 1] = "DocumentType";
@@ -5713,7 +5762,7 @@ function getAugmentedNamespace(n2) {
 var picocolors_browser = { exports: {} };
 var x = String;
 var create = function() {
-  return { isColorSupported: false, reset: x, bold: x, dim: x, italic: x, underline: x, inverse: x, hidden: x, strikethrough: x, black: x, red: x, green: x, yellow: x, blue: x, magenta: x, cyan: x, white: x, gray: x, bgBlack: x, bgRed: x, bgGreen: x, bgYellow: x, bgBlue: x, bgMagenta: x, bgCyan: x, bgWhite: x };
+  return { isColorSupported: false, reset: x, bold: x, dim: x, italic: x, underline: x, inverse: x, hidden: x, strikethrough: x, black: x, red: x, green: x, yellow: x, blue: x, magenta: x, cyan: x, white: x, gray: x, bgBlack: x, bgRed: x, bgGreen: x, bgYellow: x, bgBlue: x, bgMagenta: x, bgCyan: x, bgWhite: x, blackBright: x, redBright: x, greenBright: x, yellowBright: x, blueBright: x, magentaBright: x, cyanBright: x, whiteBright: x, bgBlackBright: x, bgRedBright: x, bgGreenBright: x, bgYellowBright: x, bgBlueBright: x, bgMagentaBright: x, bgCyanBright: x, bgWhiteBright: x };
 };
 picocolors_browser.exports = create();
 picocolors_browser.exports.createColors = create;
@@ -5770,30 +5819,40 @@ var CssSyntaxError$3 = class CssSyntaxError2 extends Error {
     let css = this.source;
     if (color == null)
       color = pico.isColorSupported;
-    if (terminalHighlight$1) {
-      if (color)
-        css = terminalHighlight$1(css);
+    let aside = (text) => text;
+    let mark = (text) => text;
+    let highlight = (text) => text;
+    if (color) {
+      let { bold, gray, red } = pico.createColors(true);
+      mark = (text) => bold(red(text));
+      aside = (text) => gray(text);
+      if (terminalHighlight$1) {
+        highlight = (text) => terminalHighlight$1(text);
+      }
     }
     let lines = css.split(/\r?\n/);
     let start = Math.max(this.line - 3, 0);
     let end = Math.min(this.line + 2, lines.length);
     let maxWidth = String(end).length;
-    let mark, aside;
-    if (color) {
-      let { bold, gray, red } = pico.createColors(true);
-      mark = (text) => bold(red(text));
-      aside = (text) => gray(text);
-    } else {
-      mark = aside = (str) => str;
-    }
     return lines.slice(start, end).map((line, index2) => {
       let number = start + 1 + index2;
       let gutter = " " + (" " + number).slice(-maxWidth) + " | ";
       if (number === this.line) {
+        if (line.length > 160) {
+          let padding = 20;
+          let subLineStart = Math.max(0, this.column - padding);
+          let subLineEnd = Math.max(
+            this.column + padding,
+            this.endColumn + padding
+          );
+          let subLine = line.slice(subLineStart, subLineEnd);
+          let spacing2 = aside(gutter.replace(/\d/g, " ")) + line.slice(0, Math.min(this.column - 1, padding - 1)).replace(/[^\t]/g, " ");
+          return mark(">") + aside(gutter) + highlight(subLine) + "\n " + spacing2 + mark("^");
+        }
         let spacing = aside(gutter.replace(/\d/g, " ")) + line.slice(0, this.column - 1).replace(/[^\t]/g, " ");
-        return mark(">") + aside(gutter) + line + "\n " + spacing + mark("^");
+        return mark(">") + aside(gutter) + highlight(line) + "\n " + spacing + mark("^");
       }
-      return " " + aside(gutter) + line;
+      return " " + aside(gutter) + highlight(line);
     }).join("\n");
   }
   toString() {
@@ -5806,9 +5865,6 @@ var CssSyntaxError$3 = class CssSyntaxError2 extends Error {
 };
 var cssSyntaxError = CssSyntaxError$3;
 CssSyntaxError$3.default = CssSyntaxError$3;
-var symbols = {};
-symbols.isClean = Symbol("isClean");
-symbols.my = Symbol("my");
 var DEFAULT_RAW = {
   after: "\n",
   beforeClose: "\n",
@@ -6131,10 +6187,13 @@ function stringify$4(node2, builder) {
 }
 var stringify_1 = stringify$4;
 stringify$4.default = stringify$4;
-var { isClean: isClean$2, my: my$2 } = symbols;
+var symbols = {};
+symbols.isClean = Symbol("isClean");
+symbols.my = Symbol("my");
 var CssSyntaxError$2 = cssSyntaxError;
 var Stringifier22 = stringifier;
 var stringify$3 = stringify_1;
+var { isClean: isClean$2, my: my$2 } = symbols;
 function cloneNode(obj, parent) {
   let cloned = new obj.constructor();
   for (let i2 in obj) {
@@ -6263,6 +6322,10 @@ var Node$4 = class Node3 {
       }
     };
   }
+  /* c8 ignore next 3 */
+  markClean() {
+    this[isClean$2] = true;
+  }
   markDirty() {
     if (this[isClean$2]) {
       this[isClean$2] = false;
@@ -6327,7 +6390,10 @@ var Node$4 = class Node3 {
       let index2 = stringRepresentation.indexOf(opts.word);
       if (index2 !== -1) {
         start = this.positionInside(index2, stringRepresentation);
-        end = this.positionInside(index2 + opts.word.length, stringRepresentation);
+        end = this.positionInside(
+          index2 + opts.word.length,
+          stringRepresentation
+        );
       }
     } else {
       if (opts.start) {
@@ -6463,7 +6529,16 @@ var Node$4 = class Node3 {
 var node = Node$4;
 Node$4.default = Node$4;
 var Node$3 = node;
-var Declaration$4 = class Declaration2 extends Node$3 {
+var Comment$4 = class Comment2 extends Node$3 {
+  constructor(defaults) {
+    super(defaults);
+    this.type = "comment";
+  }
+};
+var comment = Comment$4;
+Comment$4.default = Comment$4;
+var Node$2 = node;
+var Declaration$4 = class Declaration2 extends Node$2 {
   constructor(defaults) {
     if (defaults && typeof defaults.value !== "undefined" && typeof defaults.value !== "string") {
       defaults = { ...defaults, value: String(defaults.value) };
@@ -6477,691 +6552,14 @@ var Declaration$4 = class Declaration2 extends Node$3 {
 };
 var declaration = Declaration$4;
 Declaration$4.default = Declaration$4;
-var urlAlphabet = "useandom-26T198340PX75pxJACKVERYMINDBUSHWOLF_GQZbfghjklqvwyzrict";
-var customAlphabet = (alphabet, defaultSize = 21) => {
-  return (size = defaultSize) => {
-    let id = "";
-    let i2 = size;
-    while (i2--) {
-      id += alphabet[Math.random() * alphabet.length | 0];
-    }
-    return id;
-  };
-};
-var nanoid$1 = (size = 21) => {
-  let id = "";
-  let i2 = size;
-  while (i2--) {
-    id += urlAlphabet[Math.random() * 64 | 0];
-  }
-  return id;
-};
-var nonSecure = { nanoid: nanoid$1, customAlphabet };
-var { SourceMapConsumer: SourceMapConsumer$2, SourceMapGenerator: SourceMapGenerator$2 } = require$$2;
-var { existsSync, readFileSync } = require$$2;
-var { dirname: dirname$1, join } = require$$2;
-function fromBase64(str) {
-  if (Buffer) {
-    return Buffer.from(str, "base64").toString();
-  } else {
-    return window.atob(str);
-  }
-}
-var PreviousMap$2 = class PreviousMap2 {
-  constructor(css, opts) {
-    if (opts.map === false)
-      return;
-    this.loadAnnotation(css);
-    this.inline = this.startWith(this.annotation, "data:");
-    let prev = opts.map ? opts.map.prev : void 0;
-    let text = this.loadMap(opts.from, prev);
-    if (!this.mapFile && opts.from) {
-      this.mapFile = opts.from;
-    }
-    if (this.mapFile)
-      this.root = dirname$1(this.mapFile);
-    if (text)
-      this.text = text;
-  }
-  consumer() {
-    if (!this.consumerCache) {
-      this.consumerCache = new SourceMapConsumer$2(this.text);
-    }
-    return this.consumerCache;
-  }
-  decodeInline(text) {
-    let baseCharsetUri = /^data:application\/json;charset=utf-?8;base64,/;
-    let baseUri = /^data:application\/json;base64,/;
-    let charsetUri = /^data:application\/json;charset=utf-?8,/;
-    let uri = /^data:application\/json,/;
-    if (charsetUri.test(text) || uri.test(text)) {
-      return decodeURIComponent(text.substr(RegExp.lastMatch.length));
-    }
-    if (baseCharsetUri.test(text) || baseUri.test(text)) {
-      return fromBase64(text.substr(RegExp.lastMatch.length));
-    }
-    let encoding = text.match(/data:application\/json;([^,]+),/)[1];
-    throw new Error("Unsupported source map encoding " + encoding);
-  }
-  getAnnotationURL(sourceMapString) {
-    return sourceMapString.replace(/^\/\*\s*# sourceMappingURL=/, "").trim();
-  }
-  isMap(map) {
-    if (typeof map !== "object")
-      return false;
-    return typeof map.mappings === "string" || typeof map._mappings === "string" || Array.isArray(map.sections);
-  }
-  loadAnnotation(css) {
-    let comments = css.match(/\/\*\s*# sourceMappingURL=/gm);
-    if (!comments)
-      return;
-    let start = css.lastIndexOf(comments.pop());
-    let end = css.indexOf("*/", start);
-    if (start > -1 && end > -1) {
-      this.annotation = this.getAnnotationURL(css.substring(start, end));
-    }
-  }
-  loadFile(path) {
-    this.root = dirname$1(path);
-    if (existsSync(path)) {
-      this.mapFile = path;
-      return readFileSync(path, "utf-8").toString().trim();
-    }
-  }
-  loadMap(file, prev) {
-    if (prev === false)
-      return false;
-    if (prev) {
-      if (typeof prev === "string") {
-        return prev;
-      } else if (typeof prev === "function") {
-        let prevPath = prev(file);
-        if (prevPath) {
-          let map = this.loadFile(prevPath);
-          if (!map) {
-            throw new Error(
-              "Unable to load previous source map: " + prevPath.toString()
-            );
-          }
-          return map;
-        }
-      } else if (prev instanceof SourceMapConsumer$2) {
-        return SourceMapGenerator$2.fromSourceMap(prev).toString();
-      } else if (prev instanceof SourceMapGenerator$2) {
-        return prev.toString();
-      } else if (this.isMap(prev)) {
-        return JSON.stringify(prev);
-      } else {
-        throw new Error(
-          "Unsupported previous source map format: " + prev.toString()
-        );
-      }
-    } else if (this.inline) {
-      return this.decodeInline(this.annotation);
-    } else if (this.annotation) {
-      let map = this.annotation;
-      if (file)
-        map = join(dirname$1(file), map);
-      return this.loadFile(map);
-    }
-  }
-  startWith(string, start) {
-    if (!string)
-      return false;
-    return string.substr(0, start.length) === start;
-  }
-  withContent() {
-    return !!(this.consumer().sourcesContent && this.consumer().sourcesContent.length > 0);
-  }
-};
-var previousMap = PreviousMap$2;
-PreviousMap$2.default = PreviousMap$2;
-var { SourceMapConsumer: SourceMapConsumer$1, SourceMapGenerator: SourceMapGenerator$1 } = require$$2;
-var { fileURLToPath, pathToFileURL: pathToFileURL$1 } = require$$2;
-var { isAbsolute, resolve: resolve$1 } = require$$2;
-var { nanoid } = nonSecure;
-var terminalHighlight = require$$2;
-var CssSyntaxError$1 = cssSyntaxError;
-var PreviousMap$1 = previousMap;
-var fromOffsetCache = Symbol("fromOffsetCache");
-var sourceMapAvailable$1 = Boolean(SourceMapConsumer$1 && SourceMapGenerator$1);
-var pathAvailable$1 = Boolean(resolve$1 && isAbsolute);
-var Input$4 = class Input2 {
-  constructor(css, opts = {}) {
-    if (css === null || typeof css === "undefined" || typeof css === "object" && !css.toString) {
-      throw new Error(`PostCSS received ${css} instead of CSS string`);
-    }
-    this.css = css.toString();
-    if (this.css[0] === "\uFEFF" || this.css[0] === "\uFFFE") {
-      this.hasBOM = true;
-      this.css = this.css.slice(1);
-    } else {
-      this.hasBOM = false;
-    }
-    if (opts.from) {
-      if (!pathAvailable$1 || /^\w+:\/\//.test(opts.from) || isAbsolute(opts.from)) {
-        this.file = opts.from;
-      } else {
-        this.file = resolve$1(opts.from);
-      }
-    }
-    if (pathAvailable$1 && sourceMapAvailable$1) {
-      let map = new PreviousMap$1(this.css, opts);
-      if (map.text) {
-        this.map = map;
-        let file = map.consumer().file;
-        if (!this.file && file)
-          this.file = this.mapResolve(file);
-      }
-    }
-    if (!this.file) {
-      this.id = "<input css " + nanoid(6) + ">";
-    }
-    if (this.map)
-      this.map.file = this.from;
-  }
-  error(message, line, column, opts = {}) {
-    let result2, endLine, endColumn;
-    if (line && typeof line === "object") {
-      let start = line;
-      let end = column;
-      if (typeof start.offset === "number") {
-        let pos = this.fromOffset(start.offset);
-        line = pos.line;
-        column = pos.col;
-      } else {
-        line = start.line;
-        column = start.column;
-      }
-      if (typeof end.offset === "number") {
-        let pos = this.fromOffset(end.offset);
-        endLine = pos.line;
-        endColumn = pos.col;
-      } else {
-        endLine = end.line;
-        endColumn = end.column;
-      }
-    } else if (!column) {
-      let pos = this.fromOffset(line);
-      line = pos.line;
-      column = pos.col;
-    }
-    let origin = this.origin(line, column, endLine, endColumn);
-    if (origin) {
-      result2 = new CssSyntaxError$1(
-        message,
-        origin.endLine === void 0 ? origin.line : { column: origin.column, line: origin.line },
-        origin.endLine === void 0 ? origin.column : { column: origin.endColumn, line: origin.endLine },
-        origin.source,
-        origin.file,
-        opts.plugin
-      );
-    } else {
-      result2 = new CssSyntaxError$1(
-        message,
-        endLine === void 0 ? line : { column, line },
-        endLine === void 0 ? column : { column: endColumn, line: endLine },
-        this.css,
-        this.file,
-        opts.plugin
-      );
-    }
-    result2.input = { column, endColumn, endLine, line, source: this.css };
-    if (this.file) {
-      if (pathToFileURL$1) {
-        result2.input.url = pathToFileURL$1(this.file).toString();
-      }
-      result2.input.file = this.file;
-    }
-    return result2;
-  }
-  fromOffset(offset) {
-    let lastLine, lineToIndex;
-    if (!this[fromOffsetCache]) {
-      let lines = this.css.split("\n");
-      lineToIndex = new Array(lines.length);
-      let prevIndex = 0;
-      for (let i2 = 0, l2 = lines.length; i2 < l2; i2++) {
-        lineToIndex[i2] = prevIndex;
-        prevIndex += lines[i2].length + 1;
-      }
-      this[fromOffsetCache] = lineToIndex;
-    } else {
-      lineToIndex = this[fromOffsetCache];
-    }
-    lastLine = lineToIndex[lineToIndex.length - 1];
-    let min = 0;
-    if (offset >= lastLine) {
-      min = lineToIndex.length - 1;
-    } else {
-      let max = lineToIndex.length - 2;
-      let mid;
-      while (min < max) {
-        mid = min + (max - min >> 1);
-        if (offset < lineToIndex[mid]) {
-          max = mid - 1;
-        } else if (offset >= lineToIndex[mid + 1]) {
-          min = mid + 1;
-        } else {
-          min = mid;
-          break;
-        }
-      }
-    }
-    return {
-      col: offset - lineToIndex[min] + 1,
-      line: min + 1
-    };
-  }
-  mapResolve(file) {
-    if (/^\w+:\/\//.test(file)) {
-      return file;
-    }
-    return resolve$1(this.map.consumer().sourceRoot || this.map.root || ".", file);
-  }
-  origin(line, column, endLine, endColumn) {
-    if (!this.map)
-      return false;
-    let consumer = this.map.consumer();
-    let from = consumer.originalPositionFor({ column, line });
-    if (!from.source)
-      return false;
-    let to;
-    if (typeof endLine === "number") {
-      to = consumer.originalPositionFor({ column: endColumn, line: endLine });
-    }
-    let fromUrl;
-    if (isAbsolute(from.source)) {
-      fromUrl = pathToFileURL$1(from.source);
-    } else {
-      fromUrl = new URL(
-        from.source,
-        this.map.consumer().sourceRoot || pathToFileURL$1(this.map.mapFile)
-      );
-    }
-    let result2 = {
-      column: from.column,
-      endColumn: to && to.column,
-      endLine: to && to.line,
-      line: from.line,
-      url: fromUrl.toString()
-    };
-    if (fromUrl.protocol === "file:") {
-      if (fileURLToPath) {
-        result2.file = fileURLToPath(fromUrl);
-      } else {
-        throw new Error(`file: protocol is not available in this PostCSS build`);
-      }
-    }
-    let source = consumer.sourceContentFor(from.source);
-    if (source)
-      result2.source = source;
-    return result2;
-  }
-  toJSON() {
-    let json = {};
-    for (let name of ["hasBOM", "css", "file", "id"]) {
-      if (this[name] != null) {
-        json[name] = this[name];
-      }
-    }
-    if (this.map) {
-      json.map = { ...this.map };
-      if (json.map.consumerCache) {
-        json.map.consumerCache = void 0;
-      }
-    }
-    return json;
-  }
-  get from() {
-    return this.file || this.id;
-  }
-};
-var input = Input$4;
-Input$4.default = Input$4;
-if (terminalHighlight && terminalHighlight.registerInput) {
-  terminalHighlight.registerInput(Input$4);
-}
-var { SourceMapConsumer, SourceMapGenerator } = require$$2;
-var { dirname, relative, resolve, sep } = require$$2;
-var { pathToFileURL } = require$$2;
-var Input$3 = input;
-var sourceMapAvailable = Boolean(SourceMapConsumer && SourceMapGenerator);
-var pathAvailable = Boolean(dirname && resolve && relative && sep);
-var MapGenerator$2 = class MapGenerator2 {
-  constructor(stringify2, root2, opts, cssString) {
-    this.stringify = stringify2;
-    this.mapOpts = opts.map || {};
-    this.root = root2;
-    this.opts = opts;
-    this.css = cssString;
-    this.originalCSS = cssString;
-    this.usesFileUrls = !this.mapOpts.from && this.mapOpts.absolute;
-    this.memoizedFileURLs = /* @__PURE__ */ new Map();
-    this.memoizedPaths = /* @__PURE__ */ new Map();
-    this.memoizedURLs = /* @__PURE__ */ new Map();
-  }
-  addAnnotation() {
-    let content;
-    if (this.isInline()) {
-      content = "data:application/json;base64," + this.toBase64(this.map.toString());
-    } else if (typeof this.mapOpts.annotation === "string") {
-      content = this.mapOpts.annotation;
-    } else if (typeof this.mapOpts.annotation === "function") {
-      content = this.mapOpts.annotation(this.opts.to, this.root);
-    } else {
-      content = this.outputFile() + ".map";
-    }
-    let eol = "\n";
-    if (this.css.includes("\r\n"))
-      eol = "\r\n";
-    this.css += eol + "/*# sourceMappingURL=" + content + " */";
-  }
-  applyPrevMaps() {
-    for (let prev of this.previous()) {
-      let from = this.toUrl(this.path(prev.file));
-      let root2 = prev.root || dirname(prev.file);
-      let map;
-      if (this.mapOpts.sourcesContent === false) {
-        map = new SourceMapConsumer(prev.text);
-        if (map.sourcesContent) {
-          map.sourcesContent = null;
-        }
-      } else {
-        map = prev.consumer();
-      }
-      this.map.applySourceMap(map, from, this.toUrl(this.path(root2)));
-    }
-  }
-  clearAnnotation() {
-    if (this.mapOpts.annotation === false)
-      return;
-    if (this.root) {
-      let node2;
-      for (let i2 = this.root.nodes.length - 1; i2 >= 0; i2--) {
-        node2 = this.root.nodes[i2];
-        if (node2.type !== "comment")
-          continue;
-        if (node2.text.indexOf("# sourceMappingURL=") === 0) {
-          this.root.removeChild(i2);
-        }
-      }
-    } else if (this.css) {
-      this.css = this.css.replace(/\n*?\/\*#[\S\s]*?\*\/$/gm, "");
-    }
-  }
-  generate() {
-    this.clearAnnotation();
-    if (pathAvailable && sourceMapAvailable && this.isMap()) {
-      return this.generateMap();
-    } else {
-      let result2 = "";
-      this.stringify(this.root, (i2) => {
-        result2 += i2;
-      });
-      return [result2];
-    }
-  }
-  generateMap() {
-    if (this.root) {
-      this.generateString();
-    } else if (this.previous().length === 1) {
-      let prev = this.previous()[0].consumer();
-      prev.file = this.outputFile();
-      this.map = SourceMapGenerator.fromSourceMap(prev, {
-        ignoreInvalidMapping: true
-      });
-    } else {
-      this.map = new SourceMapGenerator({
-        file: this.outputFile(),
-        ignoreInvalidMapping: true
-      });
-      this.map.addMapping({
-        generated: { column: 0, line: 1 },
-        original: { column: 0, line: 1 },
-        source: this.opts.from ? this.toUrl(this.path(this.opts.from)) : "<no source>"
-      });
-    }
-    if (this.isSourcesContent())
-      this.setSourcesContent();
-    if (this.root && this.previous().length > 0)
-      this.applyPrevMaps();
-    if (this.isAnnotation())
-      this.addAnnotation();
-    if (this.isInline()) {
-      return [this.css];
-    } else {
-      return [this.css, this.map];
-    }
-  }
-  generateString() {
-    this.css = "";
-    this.map = new SourceMapGenerator({
-      file: this.outputFile(),
-      ignoreInvalidMapping: true
-    });
-    let line = 1;
-    let column = 1;
-    let noSource = "<no source>";
-    let mapping = {
-      generated: { column: 0, line: 0 },
-      original: { column: 0, line: 0 },
-      source: ""
-    };
-    let lines, last;
-    this.stringify(this.root, (str, node2, type) => {
-      this.css += str;
-      if (node2 && type !== "end") {
-        mapping.generated.line = line;
-        mapping.generated.column = column - 1;
-        if (node2.source && node2.source.start) {
-          mapping.source = this.sourcePath(node2);
-          mapping.original.line = node2.source.start.line;
-          mapping.original.column = node2.source.start.column - 1;
-          this.map.addMapping(mapping);
-        } else {
-          mapping.source = noSource;
-          mapping.original.line = 1;
-          mapping.original.column = 0;
-          this.map.addMapping(mapping);
-        }
-      }
-      lines = str.match(/\n/g);
-      if (lines) {
-        line += lines.length;
-        last = str.lastIndexOf("\n");
-        column = str.length - last;
-      } else {
-        column += str.length;
-      }
-      if (node2 && type !== "start") {
-        let p = node2.parent || { raws: {} };
-        let childless = node2.type === "decl" || node2.type === "atrule" && !node2.nodes;
-        if (!childless || node2 !== p.last || p.raws.semicolon) {
-          if (node2.source && node2.source.end) {
-            mapping.source = this.sourcePath(node2);
-            mapping.original.line = node2.source.end.line;
-            mapping.original.column = node2.source.end.column - 1;
-            mapping.generated.line = line;
-            mapping.generated.column = column - 2;
-            this.map.addMapping(mapping);
-          } else {
-            mapping.source = noSource;
-            mapping.original.line = 1;
-            mapping.original.column = 0;
-            mapping.generated.line = line;
-            mapping.generated.column = column - 1;
-            this.map.addMapping(mapping);
-          }
-        }
-      }
-    });
-  }
-  isAnnotation() {
-    if (this.isInline()) {
-      return true;
-    }
-    if (typeof this.mapOpts.annotation !== "undefined") {
-      return this.mapOpts.annotation;
-    }
-    if (this.previous().length) {
-      return this.previous().some((i2) => i2.annotation);
-    }
-    return true;
-  }
-  isInline() {
-    if (typeof this.mapOpts.inline !== "undefined") {
-      return this.mapOpts.inline;
-    }
-    let annotation = this.mapOpts.annotation;
-    if (typeof annotation !== "undefined" && annotation !== true) {
-      return false;
-    }
-    if (this.previous().length) {
-      return this.previous().some((i2) => i2.inline);
-    }
-    return true;
-  }
-  isMap() {
-    if (typeof this.opts.map !== "undefined") {
-      return !!this.opts.map;
-    }
-    return this.previous().length > 0;
-  }
-  isSourcesContent() {
-    if (typeof this.mapOpts.sourcesContent !== "undefined") {
-      return this.mapOpts.sourcesContent;
-    }
-    if (this.previous().length) {
-      return this.previous().some((i2) => i2.withContent());
-    }
-    return true;
-  }
-  outputFile() {
-    if (this.opts.to) {
-      return this.path(this.opts.to);
-    } else if (this.opts.from) {
-      return this.path(this.opts.from);
-    } else {
-      return "to.css";
-    }
-  }
-  path(file) {
-    if (this.mapOpts.absolute)
-      return file;
-    if (file.charCodeAt(0) === 60)
-      return file;
-    if (/^\w+:\/\//.test(file))
-      return file;
-    let cached = this.memoizedPaths.get(file);
-    if (cached)
-      return cached;
-    let from = this.opts.to ? dirname(this.opts.to) : ".";
-    if (typeof this.mapOpts.annotation === "string") {
-      from = dirname(resolve(from, this.mapOpts.annotation));
-    }
-    let path = relative(from, file);
-    this.memoizedPaths.set(file, path);
-    return path;
-  }
-  previous() {
-    if (!this.previousMaps) {
-      this.previousMaps = [];
-      if (this.root) {
-        this.root.walk((node2) => {
-          if (node2.source && node2.source.input.map) {
-            let map = node2.source.input.map;
-            if (!this.previousMaps.includes(map)) {
-              this.previousMaps.push(map);
-            }
-          }
-        });
-      } else {
-        let input2 = new Input$3(this.originalCSS, this.opts);
-        if (input2.map)
-          this.previousMaps.push(input2.map);
-      }
-    }
-    return this.previousMaps;
-  }
-  setSourcesContent() {
-    let already = {};
-    if (this.root) {
-      this.root.walk((node2) => {
-        if (node2.source) {
-          let from = node2.source.input.from;
-          if (from && !already[from]) {
-            already[from] = true;
-            let fromUrl = this.usesFileUrls ? this.toFileUrl(from) : this.toUrl(this.path(from));
-            this.map.setSourceContent(fromUrl, node2.source.input.css);
-          }
-        }
-      });
-    } else if (this.css) {
-      let from = this.opts.from ? this.toUrl(this.path(this.opts.from)) : "<no source>";
-      this.map.setSourceContent(from, this.css);
-    }
-  }
-  sourcePath(node2) {
-    if (this.mapOpts.from) {
-      return this.toUrl(this.mapOpts.from);
-    } else if (this.usesFileUrls) {
-      return this.toFileUrl(node2.source.input.from);
-    } else {
-      return this.toUrl(this.path(node2.source.input.from));
-    }
-  }
-  toBase64(str) {
-    if (Buffer) {
-      return Buffer.from(str).toString("base64");
-    } else {
-      return window.btoa(unescape(encodeURIComponent(str)));
-    }
-  }
-  toFileUrl(path) {
-    let cached = this.memoizedFileURLs.get(path);
-    if (cached)
-      return cached;
-    if (pathToFileURL) {
-      let fileURL = pathToFileURL(path).toString();
-      this.memoizedFileURLs.set(path, fileURL);
-      return fileURL;
-    } else {
-      throw new Error(
-        "`map.absolute` option is not available in this PostCSS build"
-      );
-    }
-  }
-  toUrl(path) {
-    let cached = this.memoizedURLs.get(path);
-    if (cached)
-      return cached;
-    if (sep === "\\") {
-      path = path.replace(/\\/g, "/");
-    }
-    let url = encodeURI(path).replace(/[#?]/g, encodeURIComponent);
-    this.memoizedURLs.set(path, url);
-    return url;
-  }
-};
-var mapGenerator = MapGenerator$2;
-var Node$2 = node;
-var Comment$4 = class Comment2 extends Node$2 {
-  constructor(defaults) {
-    super(defaults);
-    this.type = "comment";
-  }
-};
-var comment = Comment$4;
-Comment$4.default = Comment$4;
-var { isClean: isClean$1, my: my$1 } = symbols;
-var Declaration$3 = declaration;
 var Comment$3 = comment;
+var Declaration$3 = declaration;
 var Node$1 = node;
-var parse$4;
-var Rule$4;
+var { isClean: isClean$1, my: my$1 } = symbols;
 var AtRule$4;
+var parse$4;
 var Root$6;
+var Rule$4;
 function cleanSource(nodes) {
   return nodes.map((i2) => {
     if (i2.nodes)
@@ -7170,11 +6568,11 @@ function cleanSource(nodes) {
     return i2;
   });
 }
-function markDirtyUp(node2) {
+function markTreeDirty(node2) {
   node2[isClean$1] = false;
   if (node2.proxyOf.nodes) {
     for (let i2 of node2.proxyOf.nodes) {
-      markDirtyUp(i2);
+      markTreeDirty(i2);
     }
   }
 }
@@ -7295,7 +6693,11 @@ var Container$7 = class Container2 extends Node$1 {
   insertBefore(exist, add) {
     let existIndex = this.index(exist);
     let type = existIndex === 0 ? "prepend" : false;
-    let nodes = this.normalize(add, this.proxyOf.nodes[existIndex], type).reverse();
+    let nodes = this.normalize(
+      add,
+      this.proxyOf.nodes[existIndex],
+      type
+    ).reverse();
     existIndex = this.index(exist);
     for (let node2 of nodes)
       this.proxyOf.nodes.splice(existIndex, 0, node2);
@@ -7335,7 +6737,7 @@ var Container$7 = class Container2 extends Node$1 {
         nodes.value = String(nodes.value);
       }
       nodes = [new Declaration$3(nodes)];
-    } else if (nodes.selector) {
+    } else if (nodes.selector || nodes.selectors) {
       nodes = [new Rule$4(nodes)];
     } else if (nodes.name) {
       nodes = [new AtRule$4(nodes)];
@@ -7351,7 +6753,9 @@ var Container$7 = class Container2 extends Node$1 {
       if (i2.parent)
         i2.parent.removeChild(i2);
       if (i2[isClean$1])
-        markDirtyUp(i2);
+        markTreeDirty(i2);
+      if (!i2.raws)
+        i2.raws = {};
       if (typeof i2.raws.before === "undefined") {
         if (sample && typeof sample.raws.before !== "undefined") {
           i2.raws.before = sample.raws.before.replace(/\S/g, "");
@@ -7551,9 +6955,29 @@ Container$7.rebuild = (node2) => {
   }
 };
 var Container$6 = container;
+var AtRule$3 = class AtRule2 extends Container$6 {
+  constructor(defaults) {
+    super(defaults);
+    this.type = "atrule";
+  }
+  append(...children) {
+    if (!this.proxyOf.nodes)
+      this.nodes = [];
+    return super.append(...children);
+  }
+  prepend(...children) {
+    if (!this.proxyOf.nodes)
+      this.nodes = [];
+    return super.prepend(...children);
+  }
+};
+var atRule = AtRule$3;
+AtRule$3.default = AtRule$3;
+Container$6.registerAtRule(AtRule$3);
+var Container$5 = container;
 var LazyResult$4;
 var Processor$3;
-var Document$3 = class Document23 extends Container$6 {
+var Document$3 = class Document23 extends Container$5 {
   constructor(defaults) {
     super({ type: "document", ...defaults });
     if (!this.nodes) {
@@ -7573,77 +6997,848 @@ Document$3.registerProcessor = (dependant) => {
 };
 var document$1 = Document$3;
 Document$3.default = Document$3;
-var printed = {};
-var warnOnce$2 = function warnOnce2(message) {
-  if (printed[message])
-    return;
-  printed[message] = true;
-  if (typeof console !== "undefined" && console.warn) {
-    console.warn(message);
+var urlAlphabet = "useandom-26T198340PX75pxJACKVERYMINDBUSHWOLF_GQZbfghjklqvwyzrict";
+var customAlphabet = (alphabet, defaultSize = 21) => {
+  return (size = defaultSize) => {
+    let id = "";
+    let i2 = size;
+    while (i2--) {
+      id += alphabet[Math.random() * alphabet.length | 0];
+    }
+    return id;
+  };
+};
+var nanoid$1 = (size = 21) => {
+  let id = "";
+  let i2 = size;
+  while (i2--) {
+    id += urlAlphabet[Math.random() * 64 | 0];
+  }
+  return id;
+};
+var nonSecure = { nanoid: nanoid$1, customAlphabet };
+var { existsSync, readFileSync } = require$$2;
+var { dirname: dirname$1, join } = require$$2;
+var { SourceMapConsumer: SourceMapConsumer$2, SourceMapGenerator: SourceMapGenerator$2 } = require$$2;
+function fromBase64(str) {
+  if (Buffer) {
+    return Buffer.from(str, "base64").toString();
+  } else {
+    return window.atob(str);
+  }
+}
+var PreviousMap$2 = class PreviousMap2 {
+  constructor(css, opts) {
+    if (opts.map === false)
+      return;
+    this.loadAnnotation(css);
+    this.inline = this.startWith(this.annotation, "data:");
+    let prev = opts.map ? opts.map.prev : void 0;
+    let text = this.loadMap(opts.from, prev);
+    if (!this.mapFile && opts.from) {
+      this.mapFile = opts.from;
+    }
+    if (this.mapFile)
+      this.root = dirname$1(this.mapFile);
+    if (text)
+      this.text = text;
+  }
+  consumer() {
+    if (!this.consumerCache) {
+      this.consumerCache = new SourceMapConsumer$2(this.text);
+    }
+    return this.consumerCache;
+  }
+  decodeInline(text) {
+    let baseCharsetUri = /^data:application\/json;charset=utf-?8;base64,/;
+    let baseUri = /^data:application\/json;base64,/;
+    let charsetUri = /^data:application\/json;charset=utf-?8,/;
+    let uri = /^data:application\/json,/;
+    let uriMatch = text.match(charsetUri) || text.match(uri);
+    if (uriMatch) {
+      return decodeURIComponent(text.substr(uriMatch[0].length));
+    }
+    let baseUriMatch = text.match(baseCharsetUri) || text.match(baseUri);
+    if (baseUriMatch) {
+      return fromBase64(text.substr(baseUriMatch[0].length));
+    }
+    let encoding = text.match(/data:application\/json;([^,]+),/)[1];
+    throw new Error("Unsupported source map encoding " + encoding);
+  }
+  getAnnotationURL(sourceMapString) {
+    return sourceMapString.replace(/^\/\*\s*# sourceMappingURL=/, "").trim();
+  }
+  isMap(map) {
+    if (typeof map !== "object")
+      return false;
+    return typeof map.mappings === "string" || typeof map._mappings === "string" || Array.isArray(map.sections);
+  }
+  loadAnnotation(css) {
+    let comments = css.match(/\/\*\s*# sourceMappingURL=/g);
+    if (!comments)
+      return;
+    let start = css.lastIndexOf(comments.pop());
+    let end = css.indexOf("*/", start);
+    if (start > -1 && end > -1) {
+      this.annotation = this.getAnnotationURL(css.substring(start, end));
+    }
+  }
+  loadFile(path) {
+    this.root = dirname$1(path);
+    if (existsSync(path)) {
+      this.mapFile = path;
+      return readFileSync(path, "utf-8").toString().trim();
+    }
+  }
+  loadMap(file, prev) {
+    if (prev === false)
+      return false;
+    if (prev) {
+      if (typeof prev === "string") {
+        return prev;
+      } else if (typeof prev === "function") {
+        let prevPath = prev(file);
+        if (prevPath) {
+          let map = this.loadFile(prevPath);
+          if (!map) {
+            throw new Error(
+              "Unable to load previous source map: " + prevPath.toString()
+            );
+          }
+          return map;
+        }
+      } else if (prev instanceof SourceMapConsumer$2) {
+        return SourceMapGenerator$2.fromSourceMap(prev).toString();
+      } else if (prev instanceof SourceMapGenerator$2) {
+        return prev.toString();
+      } else if (this.isMap(prev)) {
+        return JSON.stringify(prev);
+      } else {
+        throw new Error(
+          "Unsupported previous source map format: " + prev.toString()
+        );
+      }
+    } else if (this.inline) {
+      return this.decodeInline(this.annotation);
+    } else if (this.annotation) {
+      let map = this.annotation;
+      if (file)
+        map = join(dirname$1(file), map);
+      return this.loadFile(map);
+    }
+  }
+  startWith(string, start) {
+    if (!string)
+      return false;
+    return string.substr(0, start.length) === start;
+  }
+  withContent() {
+    return !!(this.consumer().sourcesContent && this.consumer().sourcesContent.length > 0);
   }
 };
-var Warning$2 = class Warning2 {
-  constructor(text, opts = {}) {
-    this.type = "warning";
-    this.text = text;
-    if (opts.node && opts.node.source) {
-      let range = opts.node.rangeBy(opts);
-      this.line = range.start.line;
-      this.column = range.start.column;
-      this.endLine = range.end.line;
-      this.endColumn = range.end.column;
+var previousMap = PreviousMap$2;
+PreviousMap$2.default = PreviousMap$2;
+var { nanoid } = nonSecure;
+var { isAbsolute, resolve: resolve$1 } = require$$2;
+var { SourceMapConsumer: SourceMapConsumer$1, SourceMapGenerator: SourceMapGenerator$1 } = require$$2;
+var { fileURLToPath, pathToFileURL: pathToFileURL$1 } = require$$2;
+var CssSyntaxError$1 = cssSyntaxError;
+var PreviousMap$1 = previousMap;
+var terminalHighlight = require$$2;
+var fromOffsetCache = Symbol("fromOffsetCache");
+var sourceMapAvailable$1 = Boolean(SourceMapConsumer$1 && SourceMapGenerator$1);
+var pathAvailable$1 = Boolean(resolve$1 && isAbsolute);
+var Input$4 = class Input2 {
+  constructor(css, opts = {}) {
+    if (css === null || typeof css === "undefined" || typeof css === "object" && !css.toString) {
+      throw new Error(`PostCSS received ${css} instead of CSS string`);
     }
-    for (let opt in opts)
-      this[opt] = opts[opt];
-  }
-  toString() {
-    if (this.node) {
-      return this.node.error(this.text, {
-        index: this.index,
-        plugin: this.plugin,
-        word: this.word
-      }).message;
+    this.css = css.toString();
+    if (this.css[0] === "\uFEFF" || this.css[0] === "\uFFFE") {
+      this.hasBOM = true;
+      this.css = this.css.slice(1);
+    } else {
+      this.hasBOM = false;
     }
-    if (this.plugin) {
-      return this.plugin + ": " + this.text;
-    }
-    return this.text;
-  }
-};
-var warning = Warning$2;
-Warning$2.default = Warning$2;
-var Warning$1 = warning;
-var Result$3 = class Result2 {
-  constructor(processor2, root2, opts) {
-    this.processor = processor2;
-    this.messages = [];
-    this.root = root2;
-    this.opts = opts;
-    this.css = void 0;
-    this.map = void 0;
-  }
-  toString() {
-    return this.css;
-  }
-  warn(text, opts = {}) {
-    if (!opts.plugin) {
-      if (this.lastPlugin && this.lastPlugin.postcssPlugin) {
-        opts.plugin = this.lastPlugin.postcssPlugin;
+    if (opts.from) {
+      if (!pathAvailable$1 || /^\w+:\/\//.test(opts.from) || isAbsolute(opts.from)) {
+        this.file = opts.from;
+      } else {
+        this.file = resolve$1(opts.from);
       }
     }
-    let warning2 = new Warning$1(text, opts);
-    this.messages.push(warning2);
-    return warning2;
+    if (pathAvailable$1 && sourceMapAvailable$1) {
+      let map = new PreviousMap$1(this.css, opts);
+      if (map.text) {
+        this.map = map;
+        let file = map.consumer().file;
+        if (!this.file && file)
+          this.file = this.mapResolve(file);
+      }
+    }
+    if (!this.file) {
+      this.id = "<input css " + nanoid(6) + ">";
+    }
+    if (this.map)
+      this.map.file = this.from;
   }
-  warnings() {
-    return this.messages.filter((i2) => i2.type === "warning");
+  error(message, line, column, opts = {}) {
+    let endColumn, endLine, result2;
+    if (line && typeof line === "object") {
+      let start = line;
+      let end = column;
+      if (typeof start.offset === "number") {
+        let pos = this.fromOffset(start.offset);
+        line = pos.line;
+        column = pos.col;
+      } else {
+        line = start.line;
+        column = start.column;
+      }
+      if (typeof end.offset === "number") {
+        let pos = this.fromOffset(end.offset);
+        endLine = pos.line;
+        endColumn = pos.col;
+      } else {
+        endLine = end.line;
+        endColumn = end.column;
+      }
+    } else if (!column) {
+      let pos = this.fromOffset(line);
+      line = pos.line;
+      column = pos.col;
+    }
+    let origin = this.origin(line, column, endLine, endColumn);
+    if (origin) {
+      result2 = new CssSyntaxError$1(
+        message,
+        origin.endLine === void 0 ? origin.line : { column: origin.column, line: origin.line },
+        origin.endLine === void 0 ? origin.column : { column: origin.endColumn, line: origin.endLine },
+        origin.source,
+        origin.file,
+        opts.plugin
+      );
+    } else {
+      result2 = new CssSyntaxError$1(
+        message,
+        endLine === void 0 ? line : { column, line },
+        endLine === void 0 ? column : { column: endColumn, line: endLine },
+        this.css,
+        this.file,
+        opts.plugin
+      );
+    }
+    result2.input = { column, endColumn, endLine, line, source: this.css };
+    if (this.file) {
+      if (pathToFileURL$1) {
+        result2.input.url = pathToFileURL$1(this.file).toString();
+      }
+      result2.input.file = this.file;
+    }
+    return result2;
   }
-  get content() {
-    return this.css;
+  fromOffset(offset) {
+    let lastLine, lineToIndex;
+    if (!this[fromOffsetCache]) {
+      let lines = this.css.split("\n");
+      lineToIndex = new Array(lines.length);
+      let prevIndex = 0;
+      for (let i2 = 0, l2 = lines.length; i2 < l2; i2++) {
+        lineToIndex[i2] = prevIndex;
+        prevIndex += lines[i2].length + 1;
+      }
+      this[fromOffsetCache] = lineToIndex;
+    } else {
+      lineToIndex = this[fromOffsetCache];
+    }
+    lastLine = lineToIndex[lineToIndex.length - 1];
+    let min = 0;
+    if (offset >= lastLine) {
+      min = lineToIndex.length - 1;
+    } else {
+      let max = lineToIndex.length - 2;
+      let mid;
+      while (min < max) {
+        mid = min + (max - min >> 1);
+        if (offset < lineToIndex[mid]) {
+          max = mid - 1;
+        } else if (offset >= lineToIndex[mid + 1]) {
+          min = mid + 1;
+        } else {
+          min = mid;
+          break;
+        }
+      }
+    }
+    return {
+      col: offset - lineToIndex[min] + 1,
+      line: min + 1
+    };
+  }
+  mapResolve(file) {
+    if (/^\w+:\/\//.test(file)) {
+      return file;
+    }
+    return resolve$1(this.map.consumer().sourceRoot || this.map.root || ".", file);
+  }
+  origin(line, column, endLine, endColumn) {
+    if (!this.map)
+      return false;
+    let consumer = this.map.consumer();
+    let from = consumer.originalPositionFor({ column, line });
+    if (!from.source)
+      return false;
+    let to;
+    if (typeof endLine === "number") {
+      to = consumer.originalPositionFor({ column: endColumn, line: endLine });
+    }
+    let fromUrl;
+    if (isAbsolute(from.source)) {
+      fromUrl = pathToFileURL$1(from.source);
+    } else {
+      fromUrl = new URL(
+        from.source,
+        this.map.consumer().sourceRoot || pathToFileURL$1(this.map.mapFile)
+      );
+    }
+    let result2 = {
+      column: from.column,
+      endColumn: to && to.column,
+      endLine: to && to.line,
+      line: from.line,
+      url: fromUrl.toString()
+    };
+    if (fromUrl.protocol === "file:") {
+      if (fileURLToPath) {
+        result2.file = fileURLToPath(fromUrl);
+      } else {
+        throw new Error(`file: protocol is not available in this PostCSS build`);
+      }
+    }
+    let source = consumer.sourceContentFor(from.source);
+    if (source)
+      result2.source = source;
+    return result2;
+  }
+  toJSON() {
+    let json = {};
+    for (let name of ["hasBOM", "css", "file", "id"]) {
+      if (this[name] != null) {
+        json[name] = this[name];
+      }
+    }
+    if (this.map) {
+      json.map = { ...this.map };
+      if (json.map.consumerCache) {
+        json.map.consumerCache = void 0;
+      }
+    }
+    return json;
+  }
+  get from() {
+    return this.file || this.id;
   }
 };
-var result = Result$3;
-Result$3.default = Result$3;
+var input = Input$4;
+Input$4.default = Input$4;
+if (terminalHighlight && terminalHighlight.registerInput) {
+  terminalHighlight.registerInput(Input$4);
+}
+var Container$4 = container;
+var LazyResult$3;
+var Processor$2;
+var Root$5 = class Root2 extends Container$4 {
+  constructor(defaults) {
+    super(defaults);
+    this.type = "root";
+    if (!this.nodes)
+      this.nodes = [];
+  }
+  normalize(child, sample, type) {
+    let nodes = super.normalize(child);
+    if (sample) {
+      if (type === "prepend") {
+        if (this.nodes.length > 1) {
+          sample.raws.before = this.nodes[1].raws.before;
+        } else {
+          delete sample.raws.before;
+        }
+      } else if (this.first !== sample) {
+        for (let node2 of nodes) {
+          node2.raws.before = sample.raws.before;
+        }
+      }
+    }
+    return nodes;
+  }
+  removeChild(child, ignore) {
+    let index2 = this.index(child);
+    if (!ignore && index2 === 0 && this.nodes.length > 1) {
+      this.nodes[1].raws.before = this.nodes[index2].raws.before;
+    }
+    return super.removeChild(child);
+  }
+  toResult(opts = {}) {
+    let lazy = new LazyResult$3(new Processor$2(), this, opts);
+    return lazy.stringify();
+  }
+};
+Root$5.registerLazyResult = (dependant) => {
+  LazyResult$3 = dependant;
+};
+Root$5.registerProcessor = (dependant) => {
+  Processor$2 = dependant;
+};
+var root = Root$5;
+Root$5.default = Root$5;
+Container$4.registerRoot(Root$5);
+var list$2 = {
+  comma(string) {
+    return list$2.split(string, [","], true);
+  },
+  space(string) {
+    let spaces = [" ", "\n", "	"];
+    return list$2.split(string, spaces);
+  },
+  split(string, separators, last) {
+    let array = [];
+    let current = "";
+    let split = false;
+    let func = 0;
+    let inQuote = false;
+    let prevQuote = "";
+    let escape = false;
+    for (let letter of string) {
+      if (escape) {
+        escape = false;
+      } else if (letter === "\\") {
+        escape = true;
+      } else if (inQuote) {
+        if (letter === prevQuote) {
+          inQuote = false;
+        }
+      } else if (letter === '"' || letter === "'") {
+        inQuote = true;
+        prevQuote = letter;
+      } else if (letter === "(") {
+        func += 1;
+      } else if (letter === ")") {
+        if (func > 0)
+          func -= 1;
+      } else if (func === 0) {
+        if (separators.includes(letter))
+          split = true;
+      }
+      if (split) {
+        if (current !== "")
+          array.push(current.trim());
+        current = "";
+        split = false;
+      } else {
+        current += letter;
+      }
+    }
+    if (last || current !== "")
+      array.push(current.trim());
+    return array;
+  }
+};
+var list_1 = list$2;
+list$2.default = list$2;
+var Container$3 = container;
+var list$1 = list_1;
+var Rule$3 = class Rule2 extends Container$3 {
+  constructor(defaults) {
+    super(defaults);
+    this.type = "rule";
+    if (!this.nodes)
+      this.nodes = [];
+  }
+  get selectors() {
+    return list$1.comma(this.selector);
+  }
+  set selectors(values) {
+    let match = this.selector ? this.selector.match(/,\s*/) : null;
+    let sep2 = match ? match[0] : "," + this.raw("between", "beforeOpen");
+    this.selector = values.join(sep2);
+  }
+};
+var rule = Rule$3;
+Rule$3.default = Rule$3;
+Container$3.registerRule(Rule$3);
+var AtRule$2 = atRule;
+var Comment$2 = comment;
+var Declaration$2 = declaration;
+var Input$3 = input;
+var PreviousMap22 = previousMap;
+var Root$4 = root;
+var Rule$2 = rule;
+function fromJSON$1(json, inputs) {
+  if (Array.isArray(json))
+    return json.map((n2) => fromJSON$1(n2));
+  let { inputs: ownInputs, ...defaults } = json;
+  if (ownInputs) {
+    inputs = [];
+    for (let input2 of ownInputs) {
+      let inputHydrated = { ...input2, __proto__: Input$3.prototype };
+      if (inputHydrated.map) {
+        inputHydrated.map = {
+          ...inputHydrated.map,
+          __proto__: PreviousMap22.prototype
+        };
+      }
+      inputs.push(inputHydrated);
+    }
+  }
+  if (defaults.nodes) {
+    defaults.nodes = json.nodes.map((n2) => fromJSON$1(n2, inputs));
+  }
+  if (defaults.source) {
+    let { inputId, ...source } = defaults.source;
+    defaults.source = source;
+    if (inputId != null) {
+      defaults.source.input = inputs[inputId];
+    }
+  }
+  if (defaults.type === "root") {
+    return new Root$4(defaults);
+  } else if (defaults.type === "decl") {
+    return new Declaration$2(defaults);
+  } else if (defaults.type === "rule") {
+    return new Rule$2(defaults);
+  } else if (defaults.type === "comment") {
+    return new Comment$2(defaults);
+  } else if (defaults.type === "atrule") {
+    return new AtRule$2(defaults);
+  } else {
+    throw new Error("Unknown node type: " + json.type);
+  }
+}
+var fromJSON_1 = fromJSON$1;
+fromJSON$1.default = fromJSON$1;
+var { dirname, relative, resolve, sep } = require$$2;
+var { SourceMapConsumer, SourceMapGenerator } = require$$2;
+var { pathToFileURL } = require$$2;
+var Input$2 = input;
+var sourceMapAvailable = Boolean(SourceMapConsumer && SourceMapGenerator);
+var pathAvailable = Boolean(dirname && resolve && relative && sep);
+var MapGenerator$2 = class MapGenerator2 {
+  constructor(stringify2, root2, opts, cssString) {
+    this.stringify = stringify2;
+    this.mapOpts = opts.map || {};
+    this.root = root2;
+    this.opts = opts;
+    this.css = cssString;
+    this.originalCSS = cssString;
+    this.usesFileUrls = !this.mapOpts.from && this.mapOpts.absolute;
+    this.memoizedFileURLs = /* @__PURE__ */ new Map();
+    this.memoizedPaths = /* @__PURE__ */ new Map();
+    this.memoizedURLs = /* @__PURE__ */ new Map();
+  }
+  addAnnotation() {
+    let content;
+    if (this.isInline()) {
+      content = "data:application/json;base64," + this.toBase64(this.map.toString());
+    } else if (typeof this.mapOpts.annotation === "string") {
+      content = this.mapOpts.annotation;
+    } else if (typeof this.mapOpts.annotation === "function") {
+      content = this.mapOpts.annotation(this.opts.to, this.root);
+    } else {
+      content = this.outputFile() + ".map";
+    }
+    let eol = "\n";
+    if (this.css.includes("\r\n"))
+      eol = "\r\n";
+    this.css += eol + "/*# sourceMappingURL=" + content + " */";
+  }
+  applyPrevMaps() {
+    for (let prev of this.previous()) {
+      let from = this.toUrl(this.path(prev.file));
+      let root2 = prev.root || dirname(prev.file);
+      let map;
+      if (this.mapOpts.sourcesContent === false) {
+        map = new SourceMapConsumer(prev.text);
+        if (map.sourcesContent) {
+          map.sourcesContent = null;
+        }
+      } else {
+        map = prev.consumer();
+      }
+      this.map.applySourceMap(map, from, this.toUrl(this.path(root2)));
+    }
+  }
+  clearAnnotation() {
+    if (this.mapOpts.annotation === false)
+      return;
+    if (this.root) {
+      let node2;
+      for (let i2 = this.root.nodes.length - 1; i2 >= 0; i2--) {
+        node2 = this.root.nodes[i2];
+        if (node2.type !== "comment")
+          continue;
+        if (node2.text.startsWith("# sourceMappingURL=")) {
+          this.root.removeChild(i2);
+        }
+      }
+    } else if (this.css) {
+      this.css = this.css.replace(/\n*\/\*#[\S\s]*?\*\/$/gm, "");
+    }
+  }
+  generate() {
+    this.clearAnnotation();
+    if (pathAvailable && sourceMapAvailable && this.isMap()) {
+      return this.generateMap();
+    } else {
+      let result2 = "";
+      this.stringify(this.root, (i2) => {
+        result2 += i2;
+      });
+      return [result2];
+    }
+  }
+  generateMap() {
+    if (this.root) {
+      this.generateString();
+    } else if (this.previous().length === 1) {
+      let prev = this.previous()[0].consumer();
+      prev.file = this.outputFile();
+      this.map = SourceMapGenerator.fromSourceMap(prev, {
+        ignoreInvalidMapping: true
+      });
+    } else {
+      this.map = new SourceMapGenerator({
+        file: this.outputFile(),
+        ignoreInvalidMapping: true
+      });
+      this.map.addMapping({
+        generated: { column: 0, line: 1 },
+        original: { column: 0, line: 1 },
+        source: this.opts.from ? this.toUrl(this.path(this.opts.from)) : "<no source>"
+      });
+    }
+    if (this.isSourcesContent())
+      this.setSourcesContent();
+    if (this.root && this.previous().length > 0)
+      this.applyPrevMaps();
+    if (this.isAnnotation())
+      this.addAnnotation();
+    if (this.isInline()) {
+      return [this.css];
+    } else {
+      return [this.css, this.map];
+    }
+  }
+  generateString() {
+    this.css = "";
+    this.map = new SourceMapGenerator({
+      file: this.outputFile(),
+      ignoreInvalidMapping: true
+    });
+    let line = 1;
+    let column = 1;
+    let noSource = "<no source>";
+    let mapping = {
+      generated: { column: 0, line: 0 },
+      original: { column: 0, line: 0 },
+      source: ""
+    };
+    let last, lines;
+    this.stringify(this.root, (str, node2, type) => {
+      this.css += str;
+      if (node2 && type !== "end") {
+        mapping.generated.line = line;
+        mapping.generated.column = column - 1;
+        if (node2.source && node2.source.start) {
+          mapping.source = this.sourcePath(node2);
+          mapping.original.line = node2.source.start.line;
+          mapping.original.column = node2.source.start.column - 1;
+          this.map.addMapping(mapping);
+        } else {
+          mapping.source = noSource;
+          mapping.original.line = 1;
+          mapping.original.column = 0;
+          this.map.addMapping(mapping);
+        }
+      }
+      lines = str.match(/\n/g);
+      if (lines) {
+        line += lines.length;
+        last = str.lastIndexOf("\n");
+        column = str.length - last;
+      } else {
+        column += str.length;
+      }
+      if (node2 && type !== "start") {
+        let p = node2.parent || { raws: {} };
+        let childless = node2.type === "decl" || node2.type === "atrule" && !node2.nodes;
+        if (!childless || node2 !== p.last || p.raws.semicolon) {
+          if (node2.source && node2.source.end) {
+            mapping.source = this.sourcePath(node2);
+            mapping.original.line = node2.source.end.line;
+            mapping.original.column = node2.source.end.column - 1;
+            mapping.generated.line = line;
+            mapping.generated.column = column - 2;
+            this.map.addMapping(mapping);
+          } else {
+            mapping.source = noSource;
+            mapping.original.line = 1;
+            mapping.original.column = 0;
+            mapping.generated.line = line;
+            mapping.generated.column = column - 1;
+            this.map.addMapping(mapping);
+          }
+        }
+      }
+    });
+  }
+  isAnnotation() {
+    if (this.isInline()) {
+      return true;
+    }
+    if (typeof this.mapOpts.annotation !== "undefined") {
+      return this.mapOpts.annotation;
+    }
+    if (this.previous().length) {
+      return this.previous().some((i2) => i2.annotation);
+    }
+    return true;
+  }
+  isInline() {
+    if (typeof this.mapOpts.inline !== "undefined") {
+      return this.mapOpts.inline;
+    }
+    let annotation = this.mapOpts.annotation;
+    if (typeof annotation !== "undefined" && annotation !== true) {
+      return false;
+    }
+    if (this.previous().length) {
+      return this.previous().some((i2) => i2.inline);
+    }
+    return true;
+  }
+  isMap() {
+    if (typeof this.opts.map !== "undefined") {
+      return !!this.opts.map;
+    }
+    return this.previous().length > 0;
+  }
+  isSourcesContent() {
+    if (typeof this.mapOpts.sourcesContent !== "undefined") {
+      return this.mapOpts.sourcesContent;
+    }
+    if (this.previous().length) {
+      return this.previous().some((i2) => i2.withContent());
+    }
+    return true;
+  }
+  outputFile() {
+    if (this.opts.to) {
+      return this.path(this.opts.to);
+    } else if (this.opts.from) {
+      return this.path(this.opts.from);
+    } else {
+      return "to.css";
+    }
+  }
+  path(file) {
+    if (this.mapOpts.absolute)
+      return file;
+    if (file.charCodeAt(0) === 60)
+      return file;
+    if (/^\w+:\/\//.test(file))
+      return file;
+    let cached = this.memoizedPaths.get(file);
+    if (cached)
+      return cached;
+    let from = this.opts.to ? dirname(this.opts.to) : ".";
+    if (typeof this.mapOpts.annotation === "string") {
+      from = dirname(resolve(from, this.mapOpts.annotation));
+    }
+    let path = relative(from, file);
+    this.memoizedPaths.set(file, path);
+    return path;
+  }
+  previous() {
+    if (!this.previousMaps) {
+      this.previousMaps = [];
+      if (this.root) {
+        this.root.walk((node2) => {
+          if (node2.source && node2.source.input.map) {
+            let map = node2.source.input.map;
+            if (!this.previousMaps.includes(map)) {
+              this.previousMaps.push(map);
+            }
+          }
+        });
+      } else {
+        let input2 = new Input$2(this.originalCSS, this.opts);
+        if (input2.map)
+          this.previousMaps.push(input2.map);
+      }
+    }
+    return this.previousMaps;
+  }
+  setSourcesContent() {
+    let already = {};
+    if (this.root) {
+      this.root.walk((node2) => {
+        if (node2.source) {
+          let from = node2.source.input.from;
+          if (from && !already[from]) {
+            already[from] = true;
+            let fromUrl = this.usesFileUrls ? this.toFileUrl(from) : this.toUrl(this.path(from));
+            this.map.setSourceContent(fromUrl, node2.source.input.css);
+          }
+        }
+      });
+    } else if (this.css) {
+      let from = this.opts.from ? this.toUrl(this.path(this.opts.from)) : "<no source>";
+      this.map.setSourceContent(from, this.css);
+    }
+  }
+  sourcePath(node2) {
+    if (this.mapOpts.from) {
+      return this.toUrl(this.mapOpts.from);
+    } else if (this.usesFileUrls) {
+      return this.toFileUrl(node2.source.input.from);
+    } else {
+      return this.toUrl(this.path(node2.source.input.from));
+    }
+  }
+  toBase64(str) {
+    if (Buffer) {
+      return Buffer.from(str).toString("base64");
+    } else {
+      return window.btoa(unescape(encodeURIComponent(str)));
+    }
+  }
+  toFileUrl(path) {
+    let cached = this.memoizedFileURLs.get(path);
+    if (cached)
+      return cached;
+    if (pathToFileURL) {
+      let fileURL = pathToFileURL(path).toString();
+      this.memoizedFileURLs.set(path, fileURL);
+      return fileURL;
+    } else {
+      throw new Error(
+        "`map.absolute` option is not available in this PostCSS build"
+      );
+    }
+  }
+  toUrl(path) {
+    let cached = this.memoizedURLs.get(path);
+    if (cached)
+      return cached;
+    if (sep === "\\") {
+      path = path.replace(/\\/g, "/");
+    }
+    let url = encodeURI(path).replace(/[#?]/g, encodeURIComponent);
+    this.memoizedURLs.set(path, url);
+    return url;
+  }
+};
+var mapGenerator = MapGenerator$2;
 var SINGLE_QUOTE = "'".charCodeAt(0);
 var DOUBLE_QUOTE = '"'.charCodeAt(0);
 var BACKSLASH = "\\".charCodeAt(0);
@@ -7670,8 +7865,8 @@ var RE_HEX_ESCAPE = /[\da-f]/i;
 var tokenize = function tokenizer2(input2, options = {}) {
   let css = input2.css.valueOf();
   let ignore = options.ignoreErrors;
-  let code, next, quote, content, escape;
-  let escaped, escapePos, prev, n2, currentToken;
+  let code, content, escape, next, quote;
+  let currentToken, escaped, escapePos, n2, prev;
   let length = css.length;
   let pos = 0;
   let buffer = [];
@@ -7854,154 +8049,12 @@ var tokenize = function tokenizer2(input2, options = {}) {
     position
   };
 };
-var Container$5 = container;
-var AtRule$3 = class AtRule2 extends Container$5 {
-  constructor(defaults) {
-    super(defaults);
-    this.type = "atrule";
-  }
-  append(...children) {
-    if (!this.proxyOf.nodes)
-      this.nodes = [];
-    return super.append(...children);
-  }
-  prepend(...children) {
-    if (!this.proxyOf.nodes)
-      this.nodes = [];
-    return super.prepend(...children);
-  }
-};
-var atRule = AtRule$3;
-AtRule$3.default = AtRule$3;
-Container$5.registerAtRule(AtRule$3);
-var Container$4 = container;
-var LazyResult$3;
-var Processor$2;
-var Root$5 = class Root2 extends Container$4 {
-  constructor(defaults) {
-    super(defaults);
-    this.type = "root";
-    if (!this.nodes)
-      this.nodes = [];
-  }
-  normalize(child, sample, type) {
-    let nodes = super.normalize(child);
-    if (sample) {
-      if (type === "prepend") {
-        if (this.nodes.length > 1) {
-          sample.raws.before = this.nodes[1].raws.before;
-        } else {
-          delete sample.raws.before;
-        }
-      } else if (this.first !== sample) {
-        for (let node2 of nodes) {
-          node2.raws.before = sample.raws.before;
-        }
-      }
-    }
-    return nodes;
-  }
-  removeChild(child, ignore) {
-    let index2 = this.index(child);
-    if (!ignore && index2 === 0 && this.nodes.length > 1) {
-      this.nodes[1].raws.before = this.nodes[index2].raws.before;
-    }
-    return super.removeChild(child);
-  }
-  toResult(opts = {}) {
-    let lazy = new LazyResult$3(new Processor$2(), this, opts);
-    return lazy.stringify();
-  }
-};
-Root$5.registerLazyResult = (dependant) => {
-  LazyResult$3 = dependant;
-};
-Root$5.registerProcessor = (dependant) => {
-  Processor$2 = dependant;
-};
-var root = Root$5;
-Root$5.default = Root$5;
-Container$4.registerRoot(Root$5);
-var list$2 = {
-  comma(string) {
-    return list$2.split(string, [","], true);
-  },
-  space(string) {
-    let spaces = [" ", "\n", "	"];
-    return list$2.split(string, spaces);
-  },
-  split(string, separators, last) {
-    let array = [];
-    let current = "";
-    let split = false;
-    let func = 0;
-    let inQuote = false;
-    let prevQuote = "";
-    let escape = false;
-    for (let letter of string) {
-      if (escape) {
-        escape = false;
-      } else if (letter === "\\") {
-        escape = true;
-      } else if (inQuote) {
-        if (letter === prevQuote) {
-          inQuote = false;
-        }
-      } else if (letter === '"' || letter === "'") {
-        inQuote = true;
-        prevQuote = letter;
-      } else if (letter === "(") {
-        func += 1;
-      } else if (letter === ")") {
-        if (func > 0)
-          func -= 1;
-      } else if (func === 0) {
-        if (separators.includes(letter))
-          split = true;
-      }
-      if (split) {
-        if (current !== "")
-          array.push(current.trim());
-        current = "";
-        split = false;
-      } else {
-        current += letter;
-      }
-    }
-    if (last || current !== "")
-      array.push(current.trim());
-    return array;
-  }
-};
-var list_1 = list$2;
-list$2.default = list$2;
-var Container$3 = container;
-var list$1 = list_1;
-var Rule$3 = class Rule2 extends Container$3 {
-  constructor(defaults) {
-    super(defaults);
-    this.type = "rule";
-    if (!this.nodes)
-      this.nodes = [];
-  }
-  get selectors() {
-    return list$1.comma(this.selector);
-  }
-  set selectors(values) {
-    let match = this.selector ? this.selector.match(/,\s*/) : null;
-    let sep2 = match ? match[0] : "," + this.raw("between", "beforeOpen");
-    this.selector = values.join(sep2);
-  }
-};
-var rule = Rule$3;
-Rule$3.default = Rule$3;
-Container$3.registerRule(Rule$3);
-var Declaration$2 = declaration;
+var AtRule$1 = atRule;
+var Comment$1 = comment;
+var Declaration$1 = declaration;
+var Root$3 = root;
+var Rule$1 = rule;
 var tokenizer22 = tokenize;
-var Comment$2 = comment;
-var AtRule$2 = atRule;
-var Root$4 = root;
-var Rule$2 = rule;
 var SAFE_COMMENT_NEIGHBOR = {
   empty: true,
   space: true
@@ -8017,7 +8070,7 @@ function findLastWithPosition(tokens) {
 var Parser$1 = class Parser2 {
   constructor(input2) {
     this.input = input2;
-    this.root = new Root$4();
+    this.root = new Root$3();
     this.current = this.root;
     this.spaces = "";
     this.semicolon = false;
@@ -8025,7 +8078,7 @@ var Parser$1 = class Parser2 {
     this.root.source = { input: input2, start: { column: 1, line: 1, offset: 0 } };
   }
   atrule(token) {
-    let node2 = new AtRule$2();
+    let node2 = new AtRule$1();
     node2.name = token[1].slice(1);
     if (node2.name === "") {
       this.unnamedAtrule(node2, token);
@@ -8123,7 +8176,7 @@ var Parser$1 = class Parser2 {
   }
   colon(tokens) {
     let brackets = 0;
-    let token, type, prev;
+    let prev, token, type;
     for (let [i2, element] of tokens.entries()) {
       token = element;
       type = token[0];
@@ -8147,7 +8200,7 @@ var Parser$1 = class Parser2 {
     return false;
   }
   comment(token) {
-    let node2 = new Comment$2();
+    let node2 = new Comment$1();
     this.init(node2, token[2]);
     node2.source.end = this.getPosition(token[3] || token[2]);
     node2.source.end.offset++;
@@ -8167,7 +8220,7 @@ var Parser$1 = class Parser2 {
     this.tokenizer = tokenizer22(this.input);
   }
   decl(tokens, customProperty) {
-    let node2 = new Declaration$2();
+    let node2 = new Declaration$1();
     this.init(node2, tokens[0][2]);
     let last = tokens[tokens.length - 1];
     if (last[0] === ";") {
@@ -8233,12 +8286,12 @@ var Parser$1 = class Parser2 {
         let str = "";
         for (let j = i2; j > 0; j--) {
           let type = cache[j][0];
-          if (str.trim().indexOf("!") === 0 && type !== "space") {
+          if (str.trim().startsWith("!") && type !== "space") {
             break;
           }
           str = cache.pop()[1] + str;
         }
-        if (str.trim().indexOf("!") === 0) {
+        if (str.trim().startsWith("!")) {
           node2.important = true;
           node2.raws.important = str;
           tokens = cache;
@@ -8266,7 +8319,7 @@ var Parser$1 = class Parser2 {
     );
   }
   emptyRule(token) {
-    let node2 = new Rule$2();
+    let node2 = new Rule$1();
     this.init(node2, token[2]);
     node2.selector = "";
     node2.raws.between = "";
@@ -8456,7 +8509,7 @@ var Parser$1 = class Parser2 {
   }
   rule(tokens) {
     tokens.pop();
-    let node2 = new Rule$2();
+    let node2 = new Rule$1();
     this.init(node2, tokens[0][2]);
     node2.raws.between = this.spacesAndCommentsFromEnd(tokens);
     this.raw(node2, "selector", tokens);
@@ -8539,10 +8592,10 @@ var Parser$1 = class Parser2 {
 };
 var parser = Parser$1;
 var Container$2 = container;
+var Input$1 = input;
 var Parser22 = parser;
-var Input$2 = input;
 function parse$3(css, opts) {
-  let input2 = new Input$2(css, opts);
+  let input2 = new Input$1(css, opts);
   let parser2 = new Parser22(input2);
   try {
     parser2.parse();
@@ -8565,15 +8618,86 @@ function parse$3(css, opts) {
 var parse_1 = parse$3;
 parse$3.default = parse$3;
 Container$2.registerParse(parse$3);
-var { isClean, my } = symbols;
-var MapGenerator$1 = mapGenerator;
-var stringify$2 = stringify_1;
+var Warning$2 = class Warning2 {
+  constructor(text, opts = {}) {
+    this.type = "warning";
+    this.text = text;
+    if (opts.node && opts.node.source) {
+      let range = opts.node.rangeBy(opts);
+      this.line = range.start.line;
+      this.column = range.start.column;
+      this.endLine = range.end.line;
+      this.endColumn = range.end.column;
+    }
+    for (let opt in opts)
+      this[opt] = opts[opt];
+  }
+  toString() {
+    if (this.node) {
+      return this.node.error(this.text, {
+        index: this.index,
+        plugin: this.plugin,
+        word: this.word
+      }).message;
+    }
+    if (this.plugin) {
+      return this.plugin + ": " + this.text;
+    }
+    return this.text;
+  }
+};
+var warning = Warning$2;
+Warning$2.default = Warning$2;
+var Warning$1 = warning;
+var Result$3 = class Result2 {
+  constructor(processor2, root2, opts) {
+    this.processor = processor2;
+    this.messages = [];
+    this.root = root2;
+    this.opts = opts;
+    this.css = void 0;
+    this.map = void 0;
+  }
+  toString() {
+    return this.css;
+  }
+  warn(text, opts = {}) {
+    if (!opts.plugin) {
+      if (this.lastPlugin && this.lastPlugin.postcssPlugin) {
+        opts.plugin = this.lastPlugin.postcssPlugin;
+      }
+    }
+    let warning2 = new Warning$1(text, opts);
+    this.messages.push(warning2);
+    return warning2;
+  }
+  warnings() {
+    return this.messages.filter((i2) => i2.type === "warning");
+  }
+  get content() {
+    return this.css;
+  }
+};
+var result = Result$3;
+Result$3.default = Result$3;
+var printed = {};
+var warnOnce$2 = function warnOnce2(message) {
+  if (printed[message])
+    return;
+  printed[message] = true;
+  if (typeof console !== "undefined" && console.warn) {
+    console.warn(message);
+  }
+};
 var Container$1 = container;
 var Document$2 = document$1;
-var warnOnce$1 = warnOnce$2;
-var Result$2 = result;
+var MapGenerator$1 = mapGenerator;
 var parse$2 = parse_1;
-var Root$3 = root;
+var Result$2 = result;
+var Root$2 = root;
+var stringify$2 = stringify_1;
+var { isClean, my } = symbols;
+var warnOnce$1 = warnOnce$2;
 var TYPE_TO_CLASS_NAME = {
   atrule: "AtRule",
   comment: "Comment",
@@ -9050,13 +9174,13 @@ LazyResult$2.registerPostcss = (dependant) => {
 };
 var lazyResult = LazyResult$2;
 LazyResult$2.default = LazyResult$2;
-Root$3.registerLazyResult(LazyResult$2);
+Root$2.registerLazyResult(LazyResult$2);
 Document$2.registerLazyResult(LazyResult$2);
 var MapGenerator22 = mapGenerator;
-var stringify$1 = stringify_1;
-var warnOnce22 = warnOnce$2;
 var parse$1 = parse_1;
 var Result$1 = result;
+var stringify$1 = stringify_1;
+var warnOnce22 = warnOnce$2;
 var NoWorkResult$1 = class NoWorkResult2 {
   constructor(processor2, css, opts) {
     css = css.toString();
@@ -9069,10 +9193,10 @@ var NoWorkResult$1 = class NoWorkResult2 {
     let str = stringify$1;
     this.result = new Result$1(this._processor, root2, this._opts);
     this.result.css = css;
-    let self = this;
+    let self2 = this;
     Object.defineProperty(this.result, "root", {
       get() {
-        return self.root;
+        return self2.root;
       }
     });
     let map = new MapGenerator22(str, root2, this._opts, css);
@@ -9163,13 +9287,13 @@ var NoWorkResult$1 = class NoWorkResult2 {
 };
 var noWorkResult = NoWorkResult$1;
 NoWorkResult$1.default = NoWorkResult$1;
-var NoWorkResult22 = noWorkResult;
-var LazyResult$1 = lazyResult;
 var Document$1 = document$1;
-var Root$2 = root;
+var LazyResult$1 = lazyResult;
+var NoWorkResult22 = noWorkResult;
+var Root$1 = root;
 var Processor$1 = class Processor2 {
   constructor(plugins = []) {
-    this.version = "8.4.38";
+    this.version = "8.4.47";
     this.plugins = this.normalize(plugins);
   }
   normalize(plugins) {
@@ -9212,76 +9336,26 @@ var Processor$1 = class Processor2 {
 };
 var processor = Processor$1;
 Processor$1.default = Processor$1;
-Root$2.registerProcessor(Processor$1);
+Root$1.registerProcessor(Processor$1);
 Document$1.registerProcessor(Processor$1);
-var Declaration$1 = declaration;
-var PreviousMap22 = previousMap;
-var Comment$1 = comment;
-var AtRule$1 = atRule;
-var Input$1 = input;
-var Root$1 = root;
-var Rule$1 = rule;
-function fromJSON$1(json, inputs) {
-  if (Array.isArray(json))
-    return json.map((n2) => fromJSON$1(n2));
-  let { inputs: ownInputs, ...defaults } = json;
-  if (ownInputs) {
-    inputs = [];
-    for (let input2 of ownInputs) {
-      let inputHydrated = { ...input2, __proto__: Input$1.prototype };
-      if (inputHydrated.map) {
-        inputHydrated.map = {
-          ...inputHydrated.map,
-          __proto__: PreviousMap22.prototype
-        };
-      }
-      inputs.push(inputHydrated);
-    }
-  }
-  if (defaults.nodes) {
-    defaults.nodes = json.nodes.map((n2) => fromJSON$1(n2, inputs));
-  }
-  if (defaults.source) {
-    let { inputId, ...source } = defaults.source;
-    defaults.source = source;
-    if (inputId != null) {
-      defaults.source.input = inputs[inputId];
-    }
-  }
-  if (defaults.type === "root") {
-    return new Root$1(defaults);
-  } else if (defaults.type === "decl") {
-    return new Declaration$1(defaults);
-  } else if (defaults.type === "rule") {
-    return new Rule$1(defaults);
-  } else if (defaults.type === "comment") {
-    return new Comment$1(defaults);
-  } else if (defaults.type === "atrule") {
-    return new AtRule$1(defaults);
-  } else {
-    throw new Error("Unknown node type: " + json.type);
-  }
-}
-var fromJSON_1 = fromJSON$1;
-fromJSON$1.default = fromJSON$1;
+var AtRule22 = atRule;
+var Comment22 = comment;
+var Container22 = container;
 var CssSyntaxError22 = cssSyntaxError;
 var Declaration22 = declaration;
-var LazyResult22 = lazyResult;
-var Container22 = container;
-var Processor22 = processor;
-var stringify = stringify_1;
-var fromJSON = fromJSON_1;
 var Document222 = document$1;
-var Warning22 = warning;
-var Comment22 = comment;
-var AtRule22 = atRule;
-var Result22 = result;
+var fromJSON = fromJSON_1;
 var Input22 = input;
-var parse = parse_1;
+var LazyResult22 = lazyResult;
 var list = list_1;
-var Rule22 = rule;
-var Root22 = root;
 var Node22 = node;
+var parse = parse_1;
+var Processor22 = processor;
+var Result22 = result;
+var Root22 = root;
+var Rule22 = rule;
+var stringify = stringify_1;
+var Warning22 = warning;
 function postcss(...plugins) {
   if (plugins.length === 1 && Array.isArray(plugins[0])) {
     plugins = plugins[0];
@@ -10153,8 +10227,13 @@ function diffProps(oldTree, newTree, rrnodeMirror) {
       };
     } else if (newTree.tagName === "IFRAME" && name === "srcdoc")
       continue;
-    else
-      oldTree.setAttribute(name, newValue);
+    else {
+      try {
+        oldTree.setAttribute(name, newValue);
+      } catch (err) {
+        console.warn(err);
+      }
+    }
   }
   for (const { name } of Array.from(oldAttributes))
     if (!(name in newAttributes))
@@ -11412,6 +11491,7 @@ var MutationBuffer = class {
     __publicField(this, "addedSet", /* @__PURE__ */ new Set());
     __publicField(this, "movedSet", /* @__PURE__ */ new Set());
     __publicField(this, "droppedSet", /* @__PURE__ */ new Set());
+    __publicField(this, "removesSubTreeCache", /* @__PURE__ */ new Set());
     __publicField(this, "mutationCb");
     __publicField(this, "blockClass");
     __publicField(this, "blockSelector");
@@ -11457,8 +11537,17 @@ var MutationBuffer = class {
       };
       const pushAdd = (n2) => {
         const parent = index.parentNode(n2);
-        if (!parent || !inDom(n2) || parent.tagName === "TEXTAREA") {
+        if (!parent || !inDom(n2)) {
           return;
+        }
+        let cssCaptured = false;
+        if (n2.nodeType === Node.TEXT_NODE) {
+          const parentTag = parent.tagName;
+          if (parentTag === "TEXTAREA") {
+            return;
+          } else if (parentTag === "STYLE" && this.addedSet.has(parent)) {
+            cssCaptured = true;
+          }
         }
         const parentId = isShadowRoot(parent) ? this.mirror.getId(getShadowHost(n2)) : this.mirror.getId(parent);
         const nextId = getNextId(n2);
@@ -11502,7 +11591,8 @@ var MutationBuffer = class {
           },
           onStylesheetLoad: (link, childSn) => {
             this.stylesheetManager.attachLinkElement(link, childSn);
-          }
+          },
+          cssCaptured
         });
         if (sn) {
           adds.push({
@@ -11517,13 +11607,13 @@ var MutationBuffer = class {
         this.mirror.removeNodeFromMap(this.mapRemoves.shift());
       }
       for (const n2 of this.movedSet) {
-        if (isParentRemoved(this.removes, n2, this.mirror) && !this.movedSet.has(index.parentNode(n2))) {
+        if (isParentRemoved(this.removesSubTreeCache, n2, this.mirror) && !this.movedSet.has(index.parentNode(n2))) {
           continue;
         }
         pushAdd(n2);
       }
       for (const n2 of this.addedSet) {
-        if (!isAncestorInSet(this.droppedSet, n2) && !isParentRemoved(this.removes, n2, this.mirror)) {
+        if (!isAncestorInSet(this.droppedSet, n2) && !isParentRemoved(this.removesSubTreeCache, n2, this.mirror)) {
           pushAdd(n2);
         } else if (isAncestorInSet(this.movedSet, n2)) {
           pushAdd(n2);
@@ -11628,6 +11718,7 @@ var MutationBuffer = class {
       this.addedSet = /* @__PURE__ */ new Set();
       this.movedSet = /* @__PURE__ */ new Set();
       this.droppedSet = /* @__PURE__ */ new Set();
+      this.removesSubTreeCache = /* @__PURE__ */ new Set();
       this.movedMap = {};
       this.mutationCb(payload);
     });
@@ -11793,6 +11884,7 @@ var MutationBuffer = class {
                 id: nodeId,
                 isShadow: isShadowRoot(m.target) && isNativeShadowDom(m.target) ? true : void 0
               });
+              processRemoves(n2, this.removesSubTreeCache);
             }
             this.mapRemoves.push(n2);
           });
@@ -11890,21 +11982,27 @@ function deepDelete(addsSet, n2) {
   addsSet.delete(n2);
   index.childNodes(n2).forEach((childN) => deepDelete(addsSet, childN));
 }
-function isParentRemoved(removes, n2, mirror2) {
-  if (removes.length === 0)
-    return false;
-  return _isParentRemoved(removes, n2, mirror2);
-}
-function _isParentRemoved(removes, n2, mirror2) {
-  let node2 = index.parentNode(n2);
-  while (node2) {
-    const parentId = mirror2.getId(node2);
-    if (removes.some((r2) => r2.id === parentId)) {
-      return true;
-    }
-    node2 = index.parentNode(node2);
+function processRemoves(n2, cache) {
+  const queue = [n2];
+  while (queue.length) {
+    const next = queue.pop();
+    if (cache.has(next))
+      continue;
+    cache.add(next);
+    index.childNodes(next).forEach((n22) => queue.push(n22));
   }
-  return false;
+  return;
+}
+function isParentRemoved(removes, n2, mirror2) {
+  if (removes.size === 0)
+    return false;
+  return _isParentRemoved(removes, n2);
+}
+function _isParentRemoved(removes, n2, _mirror2) {
+  const node2 = index.parentNode(n2);
+  if (!node2)
+    return false;
+  return removes.has(node2);
 }
 function isAncestorInSet(set, n2) {
   if (set.size === 0)
@@ -13715,20 +13813,20 @@ function initCanvasWebGLMutationObserver(cb, win, blockClass, blockSelector) {
     handlers.forEach((h) => h());
   };
 }
-var encodedJs = "KGZ1bmN0aW9uKCkgewogICJ1c2Ugc3RyaWN0IjsKICB2YXIgY2hhcnMgPSAiQUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ejAxMjM0NTY3ODkrLyI7CiAgdmFyIGxvb2t1cCA9IHR5cGVvZiBVaW50OEFycmF5ID09PSAidW5kZWZpbmVkIiA/IFtdIDogbmV3IFVpbnQ4QXJyYXkoMjU2KTsKICBmb3IgKHZhciBpID0gMDsgaSA8IGNoYXJzLmxlbmd0aDsgaSsrKSB7CiAgICBsb29rdXBbY2hhcnMuY2hhckNvZGVBdChpKV0gPSBpOwogIH0KICB2YXIgZW5jb2RlID0gZnVuY3Rpb24oYXJyYXlidWZmZXIpIHsKICAgIHZhciBieXRlcyA9IG5ldyBVaW50OEFycmF5KGFycmF5YnVmZmVyKSwgaTIsIGxlbiA9IGJ5dGVzLmxlbmd0aCwgYmFzZTY0ID0gIiI7CiAgICBmb3IgKGkyID0gMDsgaTIgPCBsZW47IGkyICs9IDMpIHsKICAgICAgYmFzZTY0ICs9IGNoYXJzW2J5dGVzW2kyXSA+PiAyXTsKICAgICAgYmFzZTY0ICs9IGNoYXJzWyhieXRlc1tpMl0gJiAzKSA8PCA0IHwgYnl0ZXNbaTIgKyAxXSA+PiA0XTsKICAgICAgYmFzZTY0ICs9IGNoYXJzWyhieXRlc1tpMiArIDFdICYgMTUpIDw8IDIgfCBieXRlc1tpMiArIDJdID4+IDZdOwogICAgICBiYXNlNjQgKz0gY2hhcnNbYnl0ZXNbaTIgKyAyXSAmIDYzXTsKICAgIH0KICAgIGlmIChsZW4gJSAzID09PSAyKSB7CiAgICAgIGJhc2U2NCA9IGJhc2U2NC5zdWJzdHJpbmcoMCwgYmFzZTY0Lmxlbmd0aCAtIDEpICsgIj0iOwogICAgfSBlbHNlIGlmIChsZW4gJSAzID09PSAxKSB7CiAgICAgIGJhc2U2NCA9IGJhc2U2NC5zdWJzdHJpbmcoMCwgYmFzZTY0Lmxlbmd0aCAtIDIpICsgIj09IjsKICAgIH0KICAgIHJldHVybiBiYXNlNjQ7CiAgfTsKICBjb25zdCBsYXN0QmxvYk1hcCA9IC8qIEBfX1BVUkVfXyAqLyBuZXcgTWFwKCk7CiAgY29uc3QgdHJhbnNwYXJlbnRCbG9iTWFwID0gLyogQF9fUFVSRV9fICovIG5ldyBNYXAoKTsKICBhc3luYyBmdW5jdGlvbiBnZXRUcmFuc3BhcmVudEJsb2JGb3Iod2lkdGgsIGhlaWdodCwgZGF0YVVSTE9wdGlvbnMpIHsKICAgIGNvbnN0IGlkID0gYCR7d2lkdGh9LSR7aGVpZ2h0fWA7CiAgICBpZiAoIk9mZnNjcmVlbkNhbnZhcyIgaW4gZ2xvYmFsVGhpcykgewogICAgICBpZiAodHJhbnNwYXJlbnRCbG9iTWFwLmhhcyhpZCkpCiAgICAgICAgcmV0dXJuIHRyYW5zcGFyZW50QmxvYk1hcC5nZXQoaWQpOwogICAgICBjb25zdCBvZmZzY3JlZW4gPSBuZXcgT2Zmc2NyZWVuQ2FudmFzKHdpZHRoLCBoZWlnaHQpOwogICAgICBvZmZzY3JlZW4uZ2V0Q29udGV4dCgiMmQiKTsKICAgICAgY29uc3QgYmxvYiA9IGF3YWl0IG9mZnNjcmVlbi5jb252ZXJ0VG9CbG9iKGRhdGFVUkxPcHRpb25zKTsKICAgICAgY29uc3QgYXJyYXlCdWZmZXIgPSBhd2FpdCBibG9iLmFycmF5QnVmZmVyKCk7CiAgICAgIGNvbnN0IGJhc2U2NCA9IGVuY29kZShhcnJheUJ1ZmZlcik7CiAgICAgIHRyYW5zcGFyZW50QmxvYk1hcC5zZXQoaWQsIGJhc2U2NCk7CiAgICAgIHJldHVybiBiYXNlNjQ7CiAgICB9IGVsc2UgewogICAgICByZXR1cm4gIiI7CiAgICB9CiAgfQogIGNvbnN0IHdvcmtlciA9IHNlbGY7CiAgbGV0IGxvZ0RlYnVnID0gZmFsc2U7CiAgY29uc3QgZGVidWcgPSAoLi4uYXJncykgPT4gewogICAgaWYgKGxvZ0RlYnVnKSB7CiAgICAgIGNvbnNvbGUuZGVidWcoLi4uYXJncyk7CiAgICB9CiAgfTsKICB3b3JrZXIub25tZXNzYWdlID0gYXN5bmMgZnVuY3Rpb24oZSkgewogICAgbG9nRGVidWcgPSAhIWUuZGF0YS5sb2dEZWJ1ZzsKICAgIGlmICgiT2Zmc2NyZWVuQ2FudmFzIiBpbiBnbG9iYWxUaGlzKSB7CiAgICAgIGNvbnN0IHsgaWQsIGJpdG1hcCwgd2lkdGgsIGhlaWdodCwgZHgsIGR5LCBkdywgZGgsIGRhdGFVUkxPcHRpb25zIH0gPSBlLmRhdGE7CiAgICAgIGNvbnN0IHRyYW5zcGFyZW50QmFzZTY0ID0gZ2V0VHJhbnNwYXJlbnRCbG9iRm9yKAogICAgICAgIHdpZHRoLAogICAgICAgIGhlaWdodCwKICAgICAgICBkYXRhVVJMT3B0aW9ucwogICAgICApOwogICAgICBjb25zdCBvZmZzY3JlZW4gPSBuZXcgT2Zmc2NyZWVuQ2FudmFzKHdpZHRoLCBoZWlnaHQpOwogICAgICBjb25zdCBjdHggPSBvZmZzY3JlZW4uZ2V0Q29udGV4dCgiMmQiKTsKICAgICAgY3R4LmRyYXdJbWFnZShiaXRtYXAsIDAsIDAsIHdpZHRoLCBoZWlnaHQpOwogICAgICBiaXRtYXAuY2xvc2UoKTsKICAgICAgY29uc3QgYmxvYiA9IGF3YWl0IG9mZnNjcmVlbi5jb252ZXJ0VG9CbG9iKGRhdGFVUkxPcHRpb25zKTsKICAgICAgY29uc3QgdHlwZSA9IGJsb2IudHlwZTsKICAgICAgY29uc3QgYXJyYXlCdWZmZXIgPSBhd2FpdCBibG9iLmFycmF5QnVmZmVyKCk7CiAgICAgIGNvbnN0IGJhc2U2NCA9IGVuY29kZShhcnJheUJ1ZmZlcik7CiAgICAgIGlmICghbGFzdEJsb2JNYXAuaGFzKGlkKSAmJiBhd2FpdCB0cmFuc3BhcmVudEJhc2U2NCA9PT0gYmFzZTY0KSB7CiAgICAgICAgZGVidWcoIltoaWdobGlnaHQtd29ya2VyXSBjYW52YXMgYml0bWFwIGlzIHRyYW5zcGFyZW50IiwgewogICAgICAgICAgaWQsCiAgICAgICAgICBiYXNlNjQKICAgICAgICB9KTsKICAgICAgICBsYXN0QmxvYk1hcC5zZXQoaWQsIGJhc2U2NCk7CiAgICAgICAgcmV0dXJuIHdvcmtlci5wb3N0TWVzc2FnZSh7IGlkLCBzdGF0dXM6ICJ0cmFuc3BhcmVudCIgfSk7CiAgICAgIH0KICAgICAgaWYgKGxhc3RCbG9iTWFwLmdldChpZCkgPT09IGJhc2U2NCkgewogICAgICAgIGRlYnVnKCJbaGlnaGxpZ2h0LXdvcmtlcl0gY2FudmFzIGJpdG1hcCBpcyB1bmNoYW5nZWQiLCB7CiAgICAgICAgICBpZCwKICAgICAgICAgIGJhc2U2NAogICAgICAgIH0pOwogICAgICAgIHJldHVybiB3b3JrZXIucG9zdE1lc3NhZ2UoeyBpZCwgc3RhdHVzOiAidW5jaGFuZ2VkIiB9KTsKICAgICAgfQogICAgICBjb25zdCBtc2cgPSB7CiAgICAgICAgaWQsCiAgICAgICAgdHlwZSwKICAgICAgICBiYXNlNjQsCiAgICAgICAgd2lkdGgsCiAgICAgICAgaGVpZ2h0LAogICAgICAgIGR4LAogICAgICAgIGR5LAogICAgICAgIGR3LAogICAgICAgIGRoCiAgICAgIH07CiAgICAgIGRlYnVnKCJbaGlnaGxpZ2h0LXdvcmtlcl0gY2FudmFzIGJpdG1hcCBwcm9jZXNzZWQiLCBtc2cpOwogICAgICB3b3JrZXIucG9zdE1lc3NhZ2UobXNnKTsKICAgICAgbGFzdEJsb2JNYXAuc2V0KGlkLCBiYXNlNjQpOwogICAgfSBlbHNlIHsKICAgICAgZGVidWcoIltoaWdobGlnaHQtd29ya2VyXSBubyBvZmZzY3JlZW5jYW52YXMgc3VwcG9ydCIsIHsKICAgICAgICBpZDogZS5kYXRhLmlkCiAgICAgIH0pOwogICAgICByZXR1cm4gd29ya2VyLnBvc3RNZXNzYWdlKHsgaWQ6IGUuZGF0YS5pZCwgc3RhdHVzOiAidW5zdXBwb3J0ZWQiIH0pOwogICAgfQogIH07Cn0pKCk7Ci8vIyBzb3VyY2VNYXBwaW5nVVJMPWltYWdlLWJpdG1hcC1kYXRhLXVybC13b3JrZXItS0tvQ2VrWjEuanMubWFwCg==";
+var encodedJs = "KGZ1bmN0aW9uKCkgewogICJ1c2Ugc3RyaWN0IjsKICB2YXIgY2hhcnMgPSAiQUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ejAxMjM0NTY3ODkrLyI7CiAgdmFyIGxvb2t1cCA9IHR5cGVvZiBVaW50OEFycmF5ID09PSAidW5kZWZpbmVkIiA/IFtdIDogbmV3IFVpbnQ4QXJyYXkoMjU2KTsKICBmb3IgKHZhciBpID0gMDsgaSA8IGNoYXJzLmxlbmd0aDsgaSsrKSB7CiAgICBsb29rdXBbY2hhcnMuY2hhckNvZGVBdChpKV0gPSBpOwogIH0KICB2YXIgZW5jb2RlID0gZnVuY3Rpb24oYXJyYXlidWZmZXIpIHsKICAgIHZhciBieXRlcyA9IG5ldyBVaW50OEFycmF5KGFycmF5YnVmZmVyKSwgaTIsIGxlbiA9IGJ5dGVzLmxlbmd0aCwgYmFzZTY0ID0gIiI7CiAgICBmb3IgKGkyID0gMDsgaTIgPCBsZW47IGkyICs9IDMpIHsKICAgICAgYmFzZTY0ICs9IGNoYXJzW2J5dGVzW2kyXSA+PiAyXTsKICAgICAgYmFzZTY0ICs9IGNoYXJzWyhieXRlc1tpMl0gJiAzKSA8PCA0IHwgYnl0ZXNbaTIgKyAxXSA+PiA0XTsKICAgICAgYmFzZTY0ICs9IGNoYXJzWyhieXRlc1tpMiArIDFdICYgMTUpIDw8IDIgfCBieXRlc1tpMiArIDJdID4+IDZdOwogICAgICBiYXNlNjQgKz0gY2hhcnNbYnl0ZXNbaTIgKyAyXSAmIDYzXTsKICAgIH0KICAgIGlmIChsZW4gJSAzID09PSAyKSB7CiAgICAgIGJhc2U2NCA9IGJhc2U2NC5zdWJzdHJpbmcoMCwgYmFzZTY0Lmxlbmd0aCAtIDEpICsgIj0iOwogICAgfSBlbHNlIGlmIChsZW4gJSAzID09PSAxKSB7CiAgICAgIGJhc2U2NCA9IGJhc2U2NC5zdWJzdHJpbmcoMCwgYmFzZTY0Lmxlbmd0aCAtIDIpICsgIj09IjsKICAgIH0KICAgIHJldHVybiBiYXNlNjQ7CiAgfTsKICBjb25zdCBsYXN0QmxvYk1hcCA9IC8qIEBfX1BVUkVfXyAqLyBuZXcgTWFwKCk7CiAgY29uc3QgdHJhbnNwYXJlbnRCbG9iTWFwID0gLyogQF9fUFVSRV9fICovIG5ldyBNYXAoKTsKICBhc3luYyBmdW5jdGlvbiBnZXRUcmFuc3BhcmVudEJsb2JGb3Iod2lkdGgsIGhlaWdodCwgZGF0YVVSTE9wdGlvbnMpIHsKICAgIGNvbnN0IGlkID0gYCR7d2lkdGh9LSR7aGVpZ2h0fWA7CiAgICBpZiAoIk9mZnNjcmVlbkNhbnZhcyIgaW4gZ2xvYmFsVGhpcykgewogICAgICBpZiAodHJhbnNwYXJlbnRCbG9iTWFwLmhhcyhpZCkpIHJldHVybiB0cmFuc3BhcmVudEJsb2JNYXAuZ2V0KGlkKTsKICAgICAgY29uc3Qgb2Zmc2NyZWVuID0gbmV3IE9mZnNjcmVlbkNhbnZhcyh3aWR0aCwgaGVpZ2h0KTsKICAgICAgb2Zmc2NyZWVuLmdldENvbnRleHQoIjJkIik7CiAgICAgIGNvbnN0IGJsb2IgPSBhd2FpdCBvZmZzY3JlZW4uY29udmVydFRvQmxvYihkYXRhVVJMT3B0aW9ucyk7CiAgICAgIGNvbnN0IGFycmF5QnVmZmVyID0gYXdhaXQgYmxvYi5hcnJheUJ1ZmZlcigpOwogICAgICBjb25zdCBiYXNlNjQgPSBlbmNvZGUoYXJyYXlCdWZmZXIpOwogICAgICB0cmFuc3BhcmVudEJsb2JNYXAuc2V0KGlkLCBiYXNlNjQpOwogICAgICByZXR1cm4gYmFzZTY0OwogICAgfSBlbHNlIHsKICAgICAgcmV0dXJuICIiOwogICAgfQogIH0KICBjb25zdCB3b3JrZXIgPSBzZWxmOwogIGxldCBsb2dEZWJ1ZyA9IGZhbHNlOwogIGNvbnN0IGRlYnVnID0gKC4uLmFyZ3MpID0+IHsKICAgIGlmIChsb2dEZWJ1ZykgewogICAgICBjb25zb2xlLmRlYnVnKC4uLmFyZ3MpOwogICAgfQogIH07CiAgd29ya2VyLm9ubWVzc2FnZSA9IGFzeW5jIGZ1bmN0aW9uKGUpIHsKICAgIGxvZ0RlYnVnID0gISFlLmRhdGEubG9nRGVidWc7CiAgICBpZiAoIk9mZnNjcmVlbkNhbnZhcyIgaW4gZ2xvYmFsVGhpcykgewogICAgICBjb25zdCB7IGlkLCBiaXRtYXAsIHdpZHRoLCBoZWlnaHQsIGR4LCBkeSwgZHcsIGRoLCBkYXRhVVJMT3B0aW9ucyB9ID0gZS5kYXRhOwogICAgICBjb25zdCB0cmFuc3BhcmVudEJhc2U2NCA9IGdldFRyYW5zcGFyZW50QmxvYkZvcigKICAgICAgICB3aWR0aCwKICAgICAgICBoZWlnaHQsCiAgICAgICAgZGF0YVVSTE9wdGlvbnMKICAgICAgKTsKICAgICAgY29uc3Qgb2Zmc2NyZWVuID0gbmV3IE9mZnNjcmVlbkNhbnZhcyh3aWR0aCwgaGVpZ2h0KTsKICAgICAgY29uc3QgY3R4ID0gb2Zmc2NyZWVuLmdldENvbnRleHQoIjJkIik7CiAgICAgIGN0eC5kcmF3SW1hZ2UoYml0bWFwLCAwLCAwLCB3aWR0aCwgaGVpZ2h0KTsKICAgICAgYml0bWFwLmNsb3NlKCk7CiAgICAgIGNvbnN0IGJsb2IgPSBhd2FpdCBvZmZzY3JlZW4uY29udmVydFRvQmxvYihkYXRhVVJMT3B0aW9ucyk7CiAgICAgIGNvbnN0IHR5cGUgPSBibG9iLnR5cGU7CiAgICAgIGNvbnN0IGFycmF5QnVmZmVyID0gYXdhaXQgYmxvYi5hcnJheUJ1ZmZlcigpOwogICAgICBjb25zdCBiYXNlNjQgPSBlbmNvZGUoYXJyYXlCdWZmZXIpOwogICAgICBpZiAoIWxhc3RCbG9iTWFwLmhhcyhpZCkgJiYgYXdhaXQgdHJhbnNwYXJlbnRCYXNlNjQgPT09IGJhc2U2NCkgewogICAgICAgIGRlYnVnKCJbaGlnaGxpZ2h0LXdvcmtlcl0gY2FudmFzIGJpdG1hcCBpcyB0cmFuc3BhcmVudCIsIHsKICAgICAgICAgIGlkLAogICAgICAgICAgYmFzZTY0CiAgICAgICAgfSk7CiAgICAgICAgbGFzdEJsb2JNYXAuc2V0KGlkLCBiYXNlNjQpOwogICAgICAgIHJldHVybiB3b3JrZXIucG9zdE1lc3NhZ2UoeyBpZCwgc3RhdHVzOiAidHJhbnNwYXJlbnQiIH0pOwogICAgICB9CiAgICAgIGlmIChsYXN0QmxvYk1hcC5nZXQoaWQpID09PSBiYXNlNjQpIHsKICAgICAgICBkZWJ1ZygiW2hpZ2hsaWdodC13b3JrZXJdIGNhbnZhcyBiaXRtYXAgaXMgdW5jaGFuZ2VkIiwgewogICAgICAgICAgaWQsCiAgICAgICAgICBiYXNlNjQKICAgICAgICB9KTsKICAgICAgICByZXR1cm4gd29ya2VyLnBvc3RNZXNzYWdlKHsgaWQsIHN0YXR1czogInVuY2hhbmdlZCIgfSk7CiAgICAgIH0KICAgICAgY29uc3QgbXNnID0gewogICAgICAgIGlkLAogICAgICAgIHR5cGUsCiAgICAgICAgYmFzZTY0LAogICAgICAgIHdpZHRoLAogICAgICAgIGhlaWdodCwKICAgICAgICBkeCwKICAgICAgICBkeSwKICAgICAgICBkdywKICAgICAgICBkaAogICAgICB9OwogICAgICBkZWJ1ZygiW2hpZ2hsaWdodC13b3JrZXJdIGNhbnZhcyBiaXRtYXAgcHJvY2Vzc2VkIiwgbXNnKTsKICAgICAgd29ya2VyLnBvc3RNZXNzYWdlKG1zZyk7CiAgICAgIGxhc3RCbG9iTWFwLnNldChpZCwgYmFzZTY0KTsKICAgIH0gZWxzZSB7CiAgICAgIGRlYnVnKCJbaGlnaGxpZ2h0LXdvcmtlcl0gbm8gb2Zmc2NyZWVuY2FudmFzIHN1cHBvcnQiLCB7CiAgICAgICAgaWQ6IGUuZGF0YS5pZAogICAgICB9KTsKICAgICAgcmV0dXJuIHdvcmtlci5wb3N0TWVzc2FnZSh7IGlkOiBlLmRhdGEuaWQsIHN0YXR1czogInVuc3VwcG9ydGVkIiB9KTsKICAgIH0KICB9Owp9KSgpOwovLyMgc291cmNlTWFwcGluZ1VSTD1pbWFnZS1iaXRtYXAtZGF0YS11cmwtd29ya2VyLUJpWEpSZjQ3LmpzLm1hcAo=";
 var decodeBase64 = (base64) => Uint8Array.from(atob(base64), (c2) => c2.charCodeAt(0));
-var blob = typeof window !== "undefined" && window.Blob && new Blob([decodeBase64(encodedJs)], { type: "text/javascript;charset=utf-8" });
+var blob = typeof self !== "undefined" && self.Blob && new Blob([decodeBase64(encodedJs)], { type: "text/javascript;charset=utf-8" });
 function WorkerWrapper(options) {
   let objURL;
   try {
-    objURL = blob && (window.URL || window.webkitURL).createObjectURL(blob);
+    objURL = blob && (self.URL || self.webkitURL).createObjectURL(blob);
     if (!objURL)
       throw "";
     const worker = new Worker(objURL, {
       name: options == null ? void 0 : options.name
     });
     worker.addEventListener("error", () => {
-      (window.URL || window.webkitURL).revokeObjectURL(objURL);
+      (self.URL || self.webkitURL).revokeObjectURL(objURL);
     });
     return worker;
   } catch (e2) {
@@ -13739,7 +13837,7 @@ function WorkerWrapper(options) {
       }
     );
   } finally {
-    objURL && (window.URL || window.webkitURL).revokeObjectURL(objURL);
+    objURL && (self.URL || self.webkitURL).revokeObjectURL(objURL);
   }
 }
 var CanvasManager = class {
@@ -13961,9 +14059,21 @@ var CanvasManager = class {
     let lastSnapshotTime = 0;
     let rafId;
     const elementFoundTime = /* @__PURE__ */ new Map();
+    const querySelectorAll2 = (node2, selector) => {
+      const nodes = [];
+      node2.querySelectorAll(selector).forEach((n2) => nodes.push(n2));
+      const nodeIterator = document.createNodeIterator(node2, Node.ELEMENT_NODE);
+      let currentNode;
+      while (currentNode = nodeIterator.nextNode()) {
+        if (currentNode == null ? void 0 : currentNode.shadowRoot) {
+          nodes.push(...querySelectorAll2(currentNode.shadowRoot, selector));
+        }
+      }
+      return nodes;
+    };
     const getCanvas = (timestamp) => {
       const matchedCanvas = [];
-      win.document.querySelectorAll("canvas").forEach((canvas) => {
+      querySelectorAll2(win.document, "canvas").forEach((canvas) => {
         if (!isBlocked(canvas, blockClass, blockSelector, true)) {
           this.debug(canvas, "discovered canvas");
           matchedCanvas.push(canvas);
@@ -13978,7 +14088,7 @@ var CanvasManager = class {
     const getVideos = (timestamp) => {
       const matchedVideos = [];
       if (recordVideos) {
-        win.document.querySelectorAll("video").forEach((video) => {
+        querySelectorAll2(win.document, "video").forEach((video) => {
           if (video.src !== "" && video.src.indexOf("blob:") === -1)
             return;
           if (!isBlocked(video, blockClass, blockSelector, true)) {
@@ -14033,10 +14143,14 @@ var CanvasManager = class {
               actualHeight: video.videoHeight
             };
             const maxDim = Math.max(actualWidth, actualHeight);
-            if (video.width === 0 || video.height === 0 || actualWidth === 0 || actualHeight === 0 || boxWidth === 0 || boxHeight === 0) {
+            if (maxDim === 0) {
               this.debug(video, "not yet ready", {
                 width: video.width,
-                height: video.height
+                height: video.height,
+                actualWidth,
+                actualHeight,
+                boxWidth,
+                boxHeight
               });
               return;
             }
@@ -15761,7 +15875,7 @@ var MediaManager = class {
   syncAllMediaElements(options = { pause: false }) {
     this.mediaMap.forEach((_mediaState, target) => {
       this.syncTargetWithState(target);
-      if (options.pause) {
+      if (options.pause && target.pause) {
         target.pause();
       }
     });
@@ -16743,6 +16857,9 @@ var Replayer = class {
         "html.rrweb-paused *, html.rrweb-paused *:before, html.rrweb-paused *:after { animation-play-state: paused !important; }"
       );
     }
+    if (!injectStylesRules.length) {
+      return;
+    }
     if (this.usingVirtualDom) {
       const styleEl = this.virtualDom.createElement("style");
       this.virtualDom.mirror.add(
@@ -17426,7 +17543,12 @@ var Replayer = class {
         }
         return this.warnNodeNotFound(d, mutation.id);
       }
-      target.textContent = mutation.value;
+      const parentEl = target.parentElement;
+      if (mutation.value && parentEl && parentEl.tagName === "STYLE") {
+        target.textContent = adaptCssForReplay(mutation.value, this.cache);
+      } else {
+        target.textContent = mutation.value;
+      }
       if (this.usingVirtualDom) {
         const parent = target.parentNode;
         if (((_a2 = parent == null ? void 0 : parent.rules) == null ? void 0 : _a2.length) > 0)

@@ -50,7 +50,6 @@ import {
 	SortDirection,
 	Trace,
 } from '@/graph/generated/schemas'
-import useFeatureFlag, { Feature } from '@/hooks/useFeatureFlag/useFeatureFlag'
 import { useNumericProjectId } from '@/hooks/useProjectId'
 import { useSearchTime } from '@/hooks/useSearchTime'
 import { TIMESTAMP_KEY } from '@/pages/Graphing/components/Graph'
@@ -62,6 +61,10 @@ import analytics from '@/util/analytics'
 import { formatNumber } from '@/util/numbers'
 
 import * as styles from './TracesPage.css'
+import {
+	DEMO_PROJECT_ID,
+	DEMO_WORKSPACE_PROXY_APPLICATION_ID,
+} from '@/components/DemoWorkspaceButton/DemoWorkspaceButton'
 
 export type TracesOutletContext = Partial<Trace>[]
 
@@ -71,10 +74,15 @@ export const TracesPage: React.FC = () => {
 	const navigate = useNavigate()
 	const {
 		trace_id,
+		timestamp,
 		span_id,
 		trace_cursor: traceCursor,
-	} = useParams<{ trace_id: string; span_id: string; trace_cursor: string }>()
-	const aiQueryBuilderFlag = useFeatureFlag(Feature.AiQueryBuilder)
+	} = useParams<{
+		trace_id: string
+		timestamp: string
+		span_id: string
+		trace_cursor: string
+	}>()
 	const textAreaRef = useRef<HTMLTextAreaElement | null>(null)
 	const [query, setQuery] = useQueryParam('query', QueryParam)
 	const [sortColumn] = useQueryParam(SORT_COLUMN, StringParam)
@@ -104,7 +112,7 @@ export const TracesPage: React.FC = () => {
 		startDate: searchTimeContext.startDate,
 		endDate: searchTimeContext.endDate,
 		skipPolling,
-		sortColumn,
+		sortColumn: sortColumn || undefined,
 		sortDirection: sortDirection as SortDirection,
 	})
 
@@ -117,7 +125,7 @@ export const TracesPage: React.FC = () => {
 
 	const { data: workspaceSettings } = useGetWorkspaceSettingsQuery({
 		variables: { workspace_id: String(currentWorkspace?.id) },
-		skip: !currentWorkspace?.id || !aiQueryBuilderFlag,
+		skip: !currentWorkspace?.id,
 	})
 
 	const { data: metricsData, loading: metricsLoading } = useGetMetricsQuery({
@@ -217,6 +225,7 @@ export const TracesPage: React.FC = () => {
 			resources: traceEdges.map((edge) => ({
 				type: 'trace',
 				id: edge.node.traceID,
+				timestamp: edge.node.timestamp,
 				spanID: edge.node.spanID,
 			})),
 		})
@@ -225,10 +234,11 @@ export const TracesPage: React.FC = () => {
 	// Temporary workaround to preserve functionality for linking to a trace.
 	// Eventually we can delete both of these useEffects + params in the router.
 	useEffect(() => {
-		if (trace_id) {
+		if (trace_id && timestamp) {
 			set({
 				type: 'trace',
 				id: trace_id,
+				timestamp: timestamp,
 				spanID: span_id,
 			})
 		}
@@ -237,8 +247,13 @@ export const TracesPage: React.FC = () => {
 
 	useEffect(() => {
 		if (!resource) {
+			const redirectProjectId =
+				projectId === DEMO_PROJECT_ID
+					? DEMO_WORKSPACE_PROXY_APPLICATION_ID
+					: projectId
+
 			navigate({
-				pathname: `/${projectId}/traces`,
+				pathname: `/${redirectProjectId}/traces`,
 				search: location.search,
 			})
 		}
@@ -323,7 +338,7 @@ export const TracesPage: React.FC = () => {
 							workspaceSettings?.workspaceSettings
 								?.ai_query_builder
 						}
-						aiSupportedSearch={aiQueryBuilderFlag}
+						aiSupportedSearch
 					/>
 					<Box
 						display="flex"
@@ -356,8 +371,8 @@ export const TracesPage: React.FC = () => {
 											variant="outlineGray"
 											label={`
 												${sampled ? '~' : ''}${formatNumber(totalCount)} Trace${
-												totalCount !== 1 ? 's' : ''
-											}
+													totalCount !== 1 ? 's' : ''
+												}
 											`}
 											iconEnd={
 												sampled ? (

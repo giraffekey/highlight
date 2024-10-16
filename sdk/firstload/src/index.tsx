@@ -1,7 +1,3 @@
-import {
-	type AmplitudeAPI,
-	setupAmplitudeIntegration,
-} from './integrations/amplitude.js'
 import type {
 	Highlight,
 	HighlightClassOptions,
@@ -15,26 +11,31 @@ import type {
 	SessionDetails,
 } from '@highlight-run/client/src/types/types.js'
 import {
+	type AmplitudeAPI,
+	setupAmplitudeIntegration,
+} from './integrations/amplitude.js'
+import {
 	type MixpanelAPI,
 	setupMixpanelIntegration,
 } from './integrations/mixpanel.js'
 
-import { FirstLoadListeners } from '@highlight-run/client/src/listeners/first-load-listeners.js'
-import { GenerateSecureID } from '@highlight-run/client/src/utils/secure-id.js'
 import { HIGHLIGHT_URL } from '@highlight-run/client/src/constants/sessions.js'
-import { HighlightSegmentMiddleware } from './integrations/segment.js'
-import configureElectronHighlight from './environments/electron.js'
-import firstloadVersion from './__generated/version.js'
+import { FirstLoadListeners } from '@highlight-run/client/src/listeners/first-load-listeners.js'
+import { ErrorMessageType } from '@highlight-run/client/src/types/shared-types'
+import { GenerateSecureID } from '@highlight-run/client/src/utils/secure-id.js'
 import {
 	getPreviousSessionData,
 	loadCookieSessionData,
 } from '@highlight-run/client/src/utils/sessionStorage/highlightSession.js'
+import { setCookieWriteEnabled } from '@highlight-run/client/src/utils/storage'
+import type { Context, Span, SpanOptions, Tracer } from '@opentelemetry/api'
+import firstloadVersion from './__generated/version.js'
+import { listenToChromeExtensionMessage } from './browserExtension/extensionListener.js'
+import configureElectronHighlight from './environments/electron.js'
+import { HighlightSegmentMiddleware } from './integrations/segment.js'
 import { initializeFetchListener } from './listeners/fetch'
 import { initializeWebSocketListener } from './listeners/web-socket'
-import { listenToChromeExtensionMessage } from './browserExtension/extensionListener.js'
-import { ErrorMessageType } from '@highlight-run/client/src/types/shared-types'
-import type { Context, Span, SpanOptions, Tracer } from '@opentelemetry/api'
-import { setCookieWriteEnabled } from '@highlight-run/client/src/utils/storage'
+import { getNoopSpan } from '@highlight-run/client/src/otel/utils.js'
 
 enum MetricCategory {
 	Device = 'Device',
@@ -124,7 +125,9 @@ const H: HighlightPublicInterface = {
 				}) => {
 					if (options?.enableOtelTracing) {
 						setupBrowserTracing({
-							endpoint: options?.otlpEndpoint,
+							otlpEndpoint:
+								options?.otlpEndpoint ??
+								'https://otel.highlight.io',
 							projectId: projectID,
 							sessionSecureId: sessionSecureID,
 							environment: options?.environment ?? 'production',
@@ -380,25 +383,24 @@ const H: HighlightPublicInterface = {
 	): any => {
 		const tracer = typeof getTracer === 'function' ? getTracer() : undefined
 		if (!tracer) {
+			const noopSpan = getNoopSpan()
+
 			if (fn === undefined && context === undefined) {
-				;(options as Callback)()
+				return (options as Callback)(noopSpan)
 			} else if (fn === undefined) {
-				;(context as Callback)()
+				return (context as Callback)(noopSpan)
 			} else {
-				fn()
+				return fn(noopSpan)
 			}
-			return
 		}
 
-		const wrapCallback = async (
-			span: Span,
-			callback: (span: Span) => any,
-		) => {
-			try {
-				const result = await callback(span)
-				return result
-			} finally {
+		const wrapCallback = (span: Span, callback: (span: Span) => any) => {
+			const result = callback(span)
+			if (result instanceof Promise) {
+				return result.finally(() => span.end())
+			} else {
 				span.end()
+				return result
 			}
 		}
 
@@ -427,11 +429,18 @@ const H: HighlightPublicInterface = {
 		context?: Context | ((span: Span) => any),
 		fn?: (span: Span) => any,
 	): any => {
-		if (typeof getTracer !== 'function') {
-			return
-		}
+		const tracer = typeof getTracer === 'function' ? getTracer() : undefined
+		if (!tracer) {
+			const noopSpan = getNoopSpan()
 
-		const tracer = getTracer()
+			if (fn === undefined && context === undefined) {
+				return (options as Callback)(noopSpan)
+			} else if (fn === undefined) {
+				return (context as Callback)(noopSpan)
+			} else {
+				return fn(noopSpan)
+			}
+		}
 
 		if (fn === undefined && context === undefined) {
 			return tracer.startActiveSpan(name, options as Callback)
@@ -480,6 +489,7 @@ const H: HighlightPublicInterface = {
 		return {
 			url: url.toString(),
 			urlWithTimestamp: urlWithTimestamp.toString(),
+			sessionSecureID,
 		} as SessionDetails
 	},
 	getRecordingState: () => {
@@ -526,10 +536,18 @@ listenToChromeExtensionMessage()
 initializeFetchListener()
 initializeWebSocketListener()
 
-export type { HighlightOptions }
+// Exposes some helpers for tests
+const __testing = {
+	reset: () => {
+		init_called = false
+	},
+}
+
 export {
+	configureElectronHighlight,
 	H,
 	HighlightSegmentMiddleware,
 	MetricCategory,
-	configureElectronHighlight,
+	__testing,
 }
+export type { HighlightOptions }

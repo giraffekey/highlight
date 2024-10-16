@@ -16,7 +16,13 @@
 				"@rrweb/rrweb-plugin-sequential-id-record#build",
 				"@rrweb/types#build"
 			],
-			"inputs": ["src/**/*.tsx", "src/**/*.ts", "tsconfig.json"],
+			"inputs": [
+				"../client/src/**/*.tsx",
+				"../client/src/**/*.ts",
+				"src/**/*.tsx",
+				"src/**/*.ts",
+				"tsconfig.json"
+			],
 			"outputs": ["dist/**/*.d.ts"]
 		},
 		"highlight.io#build": {
@@ -47,17 +53,17 @@
 			"outputs": ["dist/**"]
 		},
 		"codegen": {
-			"cache": false,
-			"inputs": ["../**/*.gql", "../**/*.graphqls"],
-			"outputs": ["src/graph/generated/**"]
+			"inputs": ["./**/*.gql", "./**/*.graphqls"],
+			"outputs": ["src/graph/generated/**"],
+			"cache": false
 		},
 		"typegen": {
-			"cache": false,
-			"dependsOn": ["^typegen"],
+			"dependsOn": ["^typegen", "codegen"],
 			"inputs": [
 				"src/**/*.tsx",
 				"src/**/*.ts",
 				"tsconfig.json",
+				"tsconfig.tsbuildinfo",
 				"./**/*.graphqls"
 			],
 			"outputs": [
@@ -78,8 +84,7 @@
 			"cache": false
 		},
 		"build": {
-			"cache": false,
-			"dependsOn": ["codegen", "typegen", "^build"],
+			"dependsOn": ["^build", "typegen"],
 			"outputs": [
 				"lib/**",
 				"es/**",
@@ -94,6 +99,7 @@
 				"REACT_APP_FIREBASE_CONFIG_OBJECT",
 				"REACT_APP_FRONTEND_ORG",
 				"REACT_APP_FRONTEND_URI",
+				"REACT_APP_DISABLE_ANALYTICS",
 				"REACT_APP_FRONT_INTEGRATION_CLIENT_ID",
 				"REACT_APP_IN_DOCKER",
 				"REACT_APP_PRIVATE_GRAPH_URI",
@@ -117,10 +123,11 @@
 			]
 		},
 		"dev": {
-			"dependsOn": ["typegen", "^build"],
+			"dependsOn": ["^build", "typegen"],
 			"env": [
 				"REACT_APP_AUTH_MODE",
 				"REACT_APP_COMMIT_SHA",
+				"REACT_APP_DISABLE_ANALYTICS",
 				"REACT_APP_FIREBASE_CONFIG_OBJECT",
 				"REACT_APP_FRONTEND_ORG",
 				"REACT_APP_FRONTEND_URI",

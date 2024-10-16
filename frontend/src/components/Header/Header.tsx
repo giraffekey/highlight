@@ -1,5 +1,8 @@
 import { useAuthContext } from '@authentication/AuthContext'
-import { DEMO_WORKSPACE_PROXY_APPLICATION_ID } from '@components/DemoWorkspaceButton/DemoWorkspaceButton'
+import {
+	DEMO_PROJECT_ID,
+	DEMO_WORKSPACE_PROXY_APPLICATION_ID,
+} from '@components/DemoWorkspaceButton/DemoWorkspaceButton'
 import ProjectPicker from '@components/Header/components/ProjectPicker/ProjectPicker'
 import { betaTag, linkStyle } from '@components/Header/styles.css'
 import { useBillingHook } from '@components/Header/useBillingHook'
@@ -19,7 +22,6 @@ import {
 	IconSolidArrowSmRight,
 	IconSolidAtSymbol,
 	IconSolidChartBar,
-	IconSolidChat,
 	IconSolidCheck,
 	IconSolidCog,
 	IconSolidDesktopComputer,
@@ -42,7 +44,6 @@ import {
 	TextLink,
 } from '@highlight-run/ui/components'
 import { vars } from '@highlight-run/ui/vars'
-import useFeatureFlag, { Feature } from '@hooks/useFeatureFlag/useFeatureFlag'
 import { useLocalStorageProjectId, useProjectId } from '@hooks/useProjectId'
 import SvgHighlightLogoOnLight from '@icons/HighlightLogoOnLight'
 import SvgXIcon from '@icons/XIcon'
@@ -57,7 +58,6 @@ import analytics from '@util/analytics'
 import { auth } from '@util/auth'
 import { isProjectWithinTrial } from '@util/billing/billing'
 import { titleCaseString } from '@util/string'
-import { showSupportMessage } from '@util/window'
 import { Divider } from 'antd'
 import clsx from 'clsx'
 import moment from 'moment'
@@ -73,6 +73,7 @@ import { generateRandomColor } from '@/util/color'
 import { CalendlyButton } from '../CalendlyModal/CalendlyButton'
 import { CommandBar as CommandBarV1 } from './CommandBar/CommandBar'
 import styles from './Header.module.css'
+import InkeepChatSupportMenuItem from '@/components/Header/InkeepChatSupportMenuItem'
 
 type Props = {
 	fullyIntegrated?: boolean
@@ -152,7 +153,6 @@ export const Header: React.FC<Props> = ({ fullyIntegrated }) => {
 	const { projectId } = useProjectId()
 	const { projectId: localStorageProjectId } = useLocalStorageProjectId()
 	const { isLoggedIn, signOut } = useAuthContext()
-	const showMetrics = useFeatureFlag(Feature.Metrics)
 	const { allProjects, currentWorkspace } = useApplicationContext()
 	const workspaceId = currentWorkspace?.id
 	const localStorageProject = allProjects?.find(
@@ -180,7 +180,6 @@ export const Header: React.FC<Props> = ({ fullyIntegrated }) => {
 		key: string
 		icon: ({ size, ...props }: IconProps) => JSX.Element
 		isBeta?: boolean
-		hidden?: boolean
 	}[] = [
 		{
 			key: 'sessions',
@@ -201,7 +200,6 @@ export const Header: React.FC<Props> = ({ fullyIntegrated }) => {
 		{
 			key: 'metrics',
 			icon: IconSolidChartBar,
-			hidden: !showMetrics,
 		},
 		{
 			key: 'alerts',
@@ -296,9 +294,6 @@ export const Header: React.FC<Props> = ({ fullyIntegrated }) => {
 							{projectId && !isSettings && (
 								<Box display="flex" alignItems="center" gap="4">
 									{pages.map((p) => {
-										if (p.hidden) {
-											return null
-										}
 										return (
 											<LinkButton
 												iconLeft={
@@ -708,7 +703,7 @@ export const Header: React.FC<Props> = ({ fullyIntegrated }) => {
 																			</Menu.Item>
 																		)
 																	},
-															  )}
+																)}
 														<Divider className="mb-0 mt-1" />
 														<Link
 															to="/new"
@@ -773,31 +768,7 @@ export const Header: React.FC<Props> = ({ fullyIntegrated }) => {
 													</Menu.List>
 												</Menu>
 											</Menu.Item>
-											<Menu.Item
-												onClick={async () =>
-													await showSupportMessage(
-														`Read out on Discord if you need technical help. For sales / billing questions, 
-														please send us an email at sales@highlight.run.`,
-													)
-												}
-											>
-												<Box
-													display="flex"
-													alignItems="center"
-													gap="4"
-												>
-													<IconSolidChat
-														size={14}
-														color={
-															vars.theme
-																.interactive
-																.fill.secondary
-																.content.text
-														}
-													/>
-													Chat / Support
-												</Box>
-											</Menu.Item>
+											<InkeepChatSupportMenuItem />
 											<a
 												href="https://www.highlight.io/docs"
 												className={linkStyle}
@@ -904,7 +875,7 @@ const BillingBanner: React.FC = () => {
 	})
 	const { data, loading } = useGetBillingDetailsForProjectQuery({
 		variables: { project_id: projectId! },
-		skip: !projectId,
+		skip: !projectId || projectId === DEMO_PROJECT_ID,
 	})
 	const [hasReportedTrialExtension, setHasReportedTrialExtension] =
 		useLocalStorage('highlightReportedTrialExtension', false)
